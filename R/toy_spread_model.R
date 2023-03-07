@@ -9,7 +9,7 @@ coords <- 100 * matrix(runif(n_locs * 2), ncol = 2)
 pop <- rpois(n_locs, 10000 * rlnorm(n_locs, 3, 1))
 
 # fake other covariates in these cities, and include the log human population
-n_covs <- 3
+n_covs <- 2
 covs <- matrix(rnorm(n_locs * n_covs), n_locs, n_covs)
 colnames(covs) <- letters[1:n_covs]
 covs <- as.data.frame(cbind(covs, log(pop)))
@@ -24,10 +24,11 @@ plot(coords,
 # build distance matrix
 euclidean_distance <- as.matrix(dist(coords))
 
-# make fake time to invasion as a diffusion kernel form one of the cities
+# make fake time to invasion as a diffusion kernel from one of the cities
+n_times <- 10
 origin <- sample.int(n_locs, 1)
-time_to_invasion <- ceiling(euclidean_distance[origin, ] / 2) + 1
-n_times <- max(time_to_invasion)
+time_to_invasion <- 1 + ceiling((n_times - 1) * euclidean_distance[origin, ] / max(euclidean_distance[origin, ]))
+# n_times <- max(time_to_invasion)
 
 # plot these
 pal <- colorRampPalette(c("blue", "grey90"))
@@ -41,7 +42,7 @@ plot(coords,
 true_presence <- sapply(time_to_invasion,
                         function(time) {
                           (1:n_times) >= time
-                          })
+                        })
 
 # add observation probabilities for each site, biased by population and
 # increasing over time with awareness
@@ -74,8 +75,37 @@ library(greta)
 # is a positive real-valued model parameter controlling the average dispersal
 # distance. We define this as scale-less (since that is confounded with the
 # gravity model scale and we add it later) and on the log scale:
+
+# average dispersal range
 diffusion_range <- normal(1, 1, truncation = c(0, Inf))
-log_rel_diffusion_rate <- euclidean_distance / diffusion_range
+# hist(calculate(diffusion_range, nsim = 1000)[[1]], breaks = 100)
+
+# log relative rate of dispersal
+log_unscaled_diffusion_rate <- euclidean_distance / diffusion_range
+
+# relative rate of dispersal (including zero-length dispersal)
+unscaled_diffusion_matrix <- exp(log_unscaled_diffusion_rate)
+
+# set the diagonal elements to 0 (don't model rate of same-patch dispersal with
+# this exponential)
+diagonal <- diag(nrow = n_locs, ncol = n_locs)
+unscaled_diffusion_matrix <- unscaled_diffusion_matrix * (1 - diagonal)
+
+# make these columns sum to 1 to get probability of moving to each other patch *if* they left
+rel_dispersal_matrix <- sweep(unscaled_diffusion_matrix, 1, rowSums(unscaled_diffusion_matrix), FUN = "/")
+
+# probability of dispersion
+dispersal_fraction <- normal(0, 0.5, truncation = c(0, 1))
+# range(calculate(dispersal_fraction, nsim = 10000)[[1]])
+
+# normalise these to have the overall probability of dispersing to that patch,
+# and add back the probability of remaining
+dispersal_matrix <- dispersal_fraction * rel_dispersal_matrix + (1 - dispersal_fraction) * diagonal
+
+# # check this doesn't lead to population growth
+# rowSums(calculate(dispersal_matrix, nsim = 1)[[1]][1, , ])
+# growth <- dispersal_matrix %*% ones(n_locs)
+# calculate(growth, nsim = 1)[[1]][1, , ]
 
 # parametric gravity model dispersal rate on Euclidean distance with a scaling
 # factor and power parameters on each component:
@@ -85,17 +115,17 @@ log_rel_diffusion_rate <- euclidean_distance / diffusion_range
 # parameter and on the log scale this is:
 #   a * log(P_o) + b * log(P_d) - c * log(D_{o,d})
 
-pop_power_orig <- normal(1, 1, truncation = c(0, Inf))
-pop_power_dest <- normal(1, 1, truncation = c(0, Inf))
-dist_power <- normal(1, 1, truncation = c(0, Inf))
-
-weight_orig <- log(pop) * pop_power_orig
-weight_dest <- log(pop) * pop_power_dest
-pop_weights <- weight_orig %*% t(weight_dest)
-
-# add a 1 to the euclidean distance to fudge the diagonals to be non-zero
-weight_dist <- log1p(euclidean_distance) * dist_power
-log_rel_gravity_rate <- pop_weights - weight_dist
+# pop_power_orig <- normal(1, 1, truncation = c(0, Inf))
+# pop_power_dest <- normal(1, 1, truncation = c(0, Inf))
+# dist_power <- normal(1, 1, truncation = c(0, Inf))
+# 
+# weight_orig <- log(pop) * pop_power_orig
+# weight_dest <- log(pop) * pop_power_dest
+# pop_weights <- weight_orig %*% t(weight_dest)
+# 
+# # add a 1 to the euclidean distance to fudge the diagonals to be non-zero
+# weight_dist <- log1p(euclidean_distance) * dist_power
+# log_rel_gravity_rate <- pop_weights - weight_dist
 
 # combine these into a dispersal matrix. We could apply a separate scaling to
 # each one, sum them, and then exponentiate:
@@ -108,11 +138,11 @@ log_rel_gravity_rate <- pop_weights - weight_dist
 # major driver and appears in both), the matrix weights will be correlated,
 # which will lead to bad sampling. Instead, we can decompose them into an
 # overall weight and a proportion assigned to the components.
-dispersal_intercept <- normal(0, 1)
-diffusion_weight <- uniform(0, 1)
-gravity_weight <- 1 - diffusion_weight
-log_dispersal_matrix <- dispersal_intercept + gravity_weight * log_rel_gravity_rate + diffusion_weight * log_rel_diffusion_rate
-dispersal_matrix <- exp(log_dispersal_matrix)
+
+# log_dispersal_matrix <- log(dispersal_fraction) * log_rel_diffusion_rate
+# gravity_weight <- 1 - diffusion_weight
+# log_dispersal_matrix <- dispersal_intercept + gravity_weight * log_rel_gravity_rate + diffusion_weight * log_rel_diffusion_rate
+
 
 # now model suitability for the species as a site-specific growth rate, modeled
 # as log-linear with all interactions
@@ -120,11 +150,12 @@ dispersal_matrix <- exp(log_dispersal_matrix)
 # create a matrix with the intercept and all interactions, then matrix multiply
 # to model the location suitability (consider using a regularising prior on these to
 # limit overfitting) - this will be used to model growth rates
-cov_matrix <- model.matrix(~1 + a*b*c, covs)
+cov_matrix <- model.matrix(~1 + a*b, covs)
 n_coefs <- ncol(cov_matrix)
+# suitability_intercept <- normal(1, 1)
 coefs <- normal(0, 1, dim = n_coefs)
-loc_suitability <- cov_matrix %*% coefs
-R <- exp(loc_suitability)
+log_R <- cov_matrix %*% coefs
+R <- exp(log_R)
 # now to model the dispersal and growth of populations over time
 
 # Model *carrying capacity* of each location via covariates and population. We
@@ -135,29 +166,26 @@ R <- exp(loc_suitability)
 # priori more people = more habitats, but the suitability model can adjust this
 # using the covariate). Do this by defining a density-dependence effect
 # parameter M which relates the growth rate to the carrying capacity in that city
-alpha <- normal(0, 1)
+alpha <- normal(-10, 1)
 M <- exp(alpha + log(pop))
 
 # compute the carrying capacity - first raw according to Beverton Holt (negative
 # if R < 1), and then rectified ~~0 if R < 1
-K_raw <- expm1(loc_suitability) * M
+K_raw <- expm1(log_R) * M
 K <- log1pe(K_raw)
 
-# # # no longer doing this:
-# # We need to constrain the sizes of the mosquito populations so that they are
-# # not unidentified with other parameters. Cap one of the locations to be a
-# # reference city with a fixed relative carrying capacity of 1, and the rest relative
-# # to it
-# reference_loc <- 1
-# # K = rel_K / rel_K[reference_loc]
-# log_K <- log_rel_K - log_rel_K[reference_loc]
-# K <- exp(log_K)
+# calculate(R, nsim = 1)[[1]][1, , ]
+# tmp <- calculate(K, nsim = 1)[[1]][1, , ]
+# round(tmp)
 
 # set an initial vector population state in these locations, at or near carrying
-# capacity in native range
+# capacity in native range, and at some minimal level in other areas (note that
+# masking with 0s broke the model gradients, for reasons I don't fully
+# understand)
 in_native_range <- seq_len(n_locs) == origin
-initial_state <- in_native_range * K
-
+eps <- sqrt(.Machine$double.eps)
+native_range_mask <- ifelse(in_native_range, 1, eps)
+initial_state <- K * native_range_mask
 
 # define the function to iterate dynamics
 
@@ -177,53 +205,49 @@ initial_state <- in_native_range * K
 # - update the population in each location based on the carrying capacity (force a link between growth rate and carrying capacity)
 # - then do dispersal
 
-transition_function <- function(state, iter, R, M, dispersal_matrix) {
-  dd_scaling <- 1 + state / M
-  grown_state <- (R * state) / dd_scaling
+# this is a Beverton-Holt population dynamic model (density dependent growth
+# bit) implemented in log space for a) numerical stability and b) because fo a
+# bug in greta.dynamics that makes it fail with the '1' specified inside the
+# function
+
+transition_function <- function(state, iter, log_R, M, dispersal_matrix) {
+  # dd_scaling <- 1 + state / M
+  log_dd_scaling <- log1p(state / M)
+  # fecundity <- R * state
+  log_fecundity <- log_R + log(state)
+  # grown_state <- fecundity / dd_scaling
+  log_grown_state <- log_fecundity - log_dd_scaling
+  grown_state <- exp(log_grown_state)
   dispersed_state <- dispersal_matrix %*% grown_state
   dispersed_state
 }
 
-# library(greta.dynamics)
+library(greta.dynamics)
 
-# iters <- iterate_dynamic_function(transition_function = transition_function,
-#                                 initial_state = initial_pop,
-#                                 niter = n_times,
-#                                 tol = 0,
-#                                 R = R,
-#                                 M = M,
-#                                 dispersal_matrix = dispersal_matrix)
+iters <- iterate_dynamic_function(transition_function = transition_function,
+                                  initial_state = initial_state,
+                                  niter = n_times,
+                                  tol = 0,
+                                  log_R = log_R,
+                                  M = M,
+                                  dispersal_matrix = dispersal_matrix)
+states <- t(iters$all_states)
 
-# # alternatively:
-# matrix_function <- function(state, iter, R, M, dispersal_matrix) {
-#   dd_scaling <- 1 + state / M
-#   growth_rate <- R / dd_scaling
-#   # guessing at the right dimension to sweep over here
-#   new_matrix <- sweep(dispersal_matrix, 2, growth_rate, FUN = "*")
-#   new_matrix
+# tmp <- calculate(states, nsim = 1)[[1]][1, , ]
+# round(tmp, 0)
+
+# # solve with a for loop for now (slooow) until greta.dynamics is fixed up to
+# # work with TF2
+# states <- zeros(n_times, n_locs)
+# states[1, ] <- state <- initial_state
+# 
+# for (i in 2:n_times) {
+#   state <- transition_function(state, 1, R, M, dispersal_matrix)
+#   states[i, ] <- state
 # }
-# iters <- iterate_dynamic_matrix(matrix_function = matrix_function,
-#                                 initial_state = initial_pop,
-#                                 niter = n_times,
-#                                 tol = 0,
-#                                 R = R,
-#                                 M = M,
-#                                 dispersal_matrix = dispersal_matrix)
-
-# states <- t(iters$all_states)
-
-# solve with a for loop for now (slooow) until greta.dynamics is fixed up to
-# work with TF2
-states <- zeros(n_times, n_locs)
-states[1, ] <- state <- initial_state
-
-for (i in 2:n_times) {
-  state <- transition_function(state, 1, R, M, dispersal_matrix)
-  states[i, ] <- state
-}
-
-# slooooooow
-calculate(states, nsim = 1)
+# # 
+# # # slooooooow
+# # calculate(states, nsim = 1)
 
 
 # define the likelihood based on this the probability of detecting the species
@@ -235,27 +259,85 @@ calculate(states, nsim = 1)
 # perfect detection as that is confounded with the carrying capacity, so it's
 # captured in the parameter alpha.
 
+# mock up models without more complex bits
+# states <- sweep(ones(n_times, n_locs), 2, initial_state, FUN = "*")
+
 p_detect_perfect <- 1 - exp(-states)
 p_detect <- p_detect_perfect * obs_probs
+
+# tmp <- calculate(p_detect[n_times, ], nsim = 1)[[1]][1, , ]
+# round(tmp, 3)
+# pa_data[n_times, ]
 
 # define the likelihood
 distribution(pa_data) <- bernoulli(p_detect)
 
-# now we just need to fit it!
+m <- model(alpha,
+           coefs,
+           dispersal_fraction,
+           diffusion_range)
 
-# 1. need to get greta.dynamics working on TF2
+# get good starting values for chains (difficult because of exponential growth)
+n_chains <- 30
+source("R/generate_valid_inits.R")
+library(tensorflow)
+inits <- generate_valid_inits(m, n_chains)
+draws <- mcmc(m, chains = n_chains, initial_values = inits)
 
-# 2. need to get initialisation hack working on TF2 (this is exponential growth
-# so can go postal with numeric under/overflow)
+plot(draws)
+coda::gelman.diag(draws, autoburnin = FALSE, multivariate = FALSE)
 
-# 3. need to constrain dispersal matrix to have all rows equal to some dispersal
-# rate < 1, for identifiability between those parameters and alpha
+bayesplot::mcmc_pairs(draws)
+# plot(calculate(states[1, 1], values = draws))
+# summary(calculate(states[1, 1], values = draws, nsim = 1000)[[1]])
 
-# note: 
-# this might cause the populations to grow from the initial very small
-# dispersal, even in the furthest places. That might be fine, it's a limitation
-# of the continuous model.
+# now need to work out identifiability for multiple component dispersal
+# matrices:
+# - model each one, and constrain it to have rows summing to 1, then define a
+# set of weights (summing to 1) across the matrices
+# - need to make sure there is no intercept parameter in each that will be
+# non-identified with the weights
+
+# make predictions of time to invasion
+present_sim <- calculate(p_detect_perfect > 0.5,
+                         values = draws,
+                         nsim = 1000)[[1]]
+
+first <- function(x) min(c(which(as.logical(x)), length(x)))
+arrival_time_sim <- apply(present_sim, c(1, 3), first)
+
+mean_arrival_time <- colMeans(arrival_time_sim)
+ci_arrival_time <- apply(arrival_time_sim, 2, quantile, c(0.025, 0.975))
+
+# plot true and estimated arrival times
+par(mfrow = c(2, 1))
+plot(coords,
+     cex = 2 * pop / max(pop) + 1,
+     pch = 16,
+     col = pal(n_times)[time_to_invasion],
+     asp = 1)
+points(x = coords[origin, 1], y = coords[origin, 2],
+       cex = 2 * pop[origin] / max(pop) + 1,
+       pch = 21,
+       lwd = 2,
+       col = "red")
+title(main = "truth")
+
+plot(coords,
+     cex = 2 * pop / max(pop) + 1,
+     pch = 16,
+     col = pal(n_times)[ceiling(mean_arrival_time)],
+     asp = 1)
+points(x = coords[origin, 1], y = coords[origin, 2],
+       cex = 2 * pop[origin] / max(pop) + 1,
+       pch = 21,
+       lwd = 2,
+       col = "red")
+title(main = "estimated")
 
 
 
 
+# Note that the fitted model is different from the 'true' generating process for
+# this simple model. The fitted model accounts for large suitable patches acting
+# as sources in the spread process. So it's not bad considering that.
