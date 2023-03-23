@@ -1,4 +1,5 @@
-# inter-patch population spread modelling (dynamic range model on a network) toy example
+# inter-patch population spread modelling (dynamic range model on a network) toy
+# example
 
 # make fake data to play with
 set.seed(2023-03-03)
@@ -12,7 +13,7 @@ pop <- rpois(n_locs, 10000 * rlnorm(n_locs, 3, 1))
 n_covs <- 2
 covs <- matrix(rnorm(n_locs * n_covs), n_locs, n_covs)
 colnames(covs) <- letters[1:n_covs]
-covs <- as.data.frame(cbind(covs, log(pop)))
+covs <- as.data.frame(cbind(covs, pop = log(pop)))
 
 # plot these
 plot(coords,
@@ -150,7 +151,7 @@ dispersal_matrix <- dispersal_fraction * rel_dispersal_matrix + (1 - dispersal_f
 # create a matrix with the intercept and all interactions, then matrix multiply
 # to model the location suitability (consider using a regularising prior on these to
 # limit overfitting) - this will be used to model growth rates
-cov_matrix <- model.matrix(~1 + a*b, covs)
+cov_matrix <- model.matrix(~1 + a*b + pop, covs)
 n_coefs <- ncol(cov_matrix)
 # suitability_intercept <- normal(1, 1)
 coefs <- normal(0, 1, dim = n_coefs)
