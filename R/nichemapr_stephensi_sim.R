@@ -64,14 +64,14 @@ wetness_perc <- 100
 
 # set lat longs of the location
 
-# placename <- "Awash, Ethiopia"
-# loc <- c(40.142981, 8.9972474)
+placename <- "Awash, Ethiopia"
+loc <- c(40.142981, 8.9972474)
 
 # placename <- "Niamey, Niger"
 # loc <- c(2.0840132, 13.5127664)
 
-placename <- "Bangui, CAR"
-loc <- c(18.561247, 4.365849)
+# placename <- "Bangui, CAR"
+# loc <- c(18.561247, 4.365849)
 
 micro <- micro_global(
   # place
@@ -333,7 +333,9 @@ region_countries <- function() {
 
 # get a shapefile of the region of interest
 library(tidyverse)
-world_country_shapes <- world(path = tempdir())
+library(terra)
+library(geodata)
+world_country_shapes <- world(level = 0, path = "~/build")
 keep <- world_country_shapes$GID_0 %in% region_countries()
 region_country_shapes <- world_country_shapes[keep, ]
 region_shape <- terra::aggregate(region_country_shapes)
@@ -355,9 +357,70 @@ region_raster_mask <- region_shape_buffer %>%
 
 # pull out the non-NA cells in this
 coords <- xyFromCell(region_raster_mask, cells(region_raster_mask))
-plot(region_raster_mask)
-points(coords, pch = ".")
+
 # port the microclimate conditions into the adult survival model
+# load the mgcv survival model 
+library(mgcv)
+survival_model <- readRDS("data/survival_model/survival_model.RDS")
+
+survival <- function (temperature = 20,
+                      humidity = 100,
+                      model = NULL,
+                      use_wild_correction = FALSE,
+                      period_days = 1) {
+  
+  if (is.null(model)) {
+    stop ("model not specified")
+  }
+  
+  # construct dataframe for prediction
+  df_pred <- data.frame(temperature = temperature,
+                        humidity = humidity,
+                        sex = "F",
+                        off = 0)
+  
+  # predict cumulative survival probability after one day
+  survival <- 1 - predict(model, df_pred, type = "response")
+  
+  if (use_wild_correction) {
+    wild_correction <- attr(model, "wild_correction")
+    survival <- survival * wild_correction
+  }
+  
+  # correct to given time period over which to calculate survival
+  survival <- survival ^ period_days
+  
+  survival
+  
+}
+
+
+# get hourly survival probabilities
+survival_microclimate_all <- survival(temperature = microclimate_temperature_all,
+                                      humidity = microclimate_humidity_all,
+                                      model = survival_model,
+                                      use_wild_correction = TRUE,
+                                      period_days = 1 / 24)
+
+survival_outside_all <- survival(temperature = outside_temperature_all,
+                                 humidity = outside_humidity_all,
+                                 model = survival_model,
+                                 use_wild_correction = TRUE,
+                                 period_days = 1 / 24)
+
+survival_microclimate <- survival_microclimate_all[keep]
+survival_outside <- survival_outside_all[keep]
+par(mfrow = c(1, 1))
+plot(survival_outside ~ dates,
+     col = "light green",
+     type = "l",
+     lwd = 2,
+     ylab = "Hourly probability of survival",
+     xlab = "",
+     ylim = range(c(survival_microclimate, survival_outside)),
+     xlim = date_range)
+lines(survival_microclimate ~ dates,
+      col = "dark green", lwd = 2)
 
 # plug the survival curves (and other An. stephensi temperature parameters) into
 # the temperature suitability function(s)
