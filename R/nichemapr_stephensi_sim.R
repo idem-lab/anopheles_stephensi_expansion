@@ -181,3 +181,193 @@ title(main = paste("Microclimate conditions in", placename,
 
 
 # need to plug these into the temperature suitability model
+
+
+# To do:
+
+# find all the centroids of the climate raster, for the Afro and EMRO regions
+
+# find and load the global_climate raster
+gcfolder <- paste(.libPaths()[1], "/gcfolder.rda", sep = "")
+load(gcfolder)
+nichemapr_climate_raster_mask <- terra::rast(paste0(folder, "/global_climate.nc"))[[1]] * 0 
+names(nichemapr_climate_raster_mask) <- "mask"
+# crop down to EMRO and AFRO regions
+
+africa_countries <- function () {
+  c(
+    "AGO",
+    "BDI",
+    "BEN",
+    "BFA",
+    "BWA",
+    "CAF",
+    "CIV",
+    "CMR",
+    "COD",
+    "COG",
+    "COM",
+    "CPV",
+    "DJI",
+    "DZA",
+    "EGY",
+    "ERI",
+    "ESH",
+    "ETH",
+    "GAB",
+    "GHA",
+    "GIN",
+    "GMB",
+    "GNB",
+    "GNQ",
+    "KEN",
+    "LBR",
+    "LBY",
+    "LSO",
+    "MAR",
+    "MDG",
+    "MLI",
+    "MOZ",
+    "MRT",
+    "MUS",
+    "MWI",
+    "NAM",
+    "NER",
+    "NGA",
+    "RWA",
+    "SDN",
+    "SEN",
+    "SLE",
+    "SOM",
+    "SSD",
+    "STP",
+    "SWZ",
+    "TCD",
+    "TGO",
+    "TUN",
+    "TZA",
+    "UGA",
+    "ZAF",
+    "ZMB",
+    "ZWE"
+  )
+}
+
+emro_countries <- function () {
+  c(
+    "AFG",
+    "BHR",
+    "DJI",
+    "EGY",
+    "IRN",
+    "IRQ",
+    "JOR",
+    "KWT",
+    "LBN",
+    "LBY",
+    "MAR",
+    "PSE",
+    "OMN",
+    "PAK",
+    "QAT",
+    "SAU",
+    "SOM",
+    "SDN",
+    "SYR",
+    "TUN",
+    "ARE",
+    "YEM"
+  )
+}
+
+searo_countries <- function() {
+  c(
+    "BGD",
+    "BTN",
+    "PRK",
+    "IND",
+    "IDN",
+    "MDV",
+    "MMR",
+    "NPL",
+    "LKA",
+    "THA",
+    "TLS"
+  )
+}
+
+euro_countries_subset <- function() {
+  c(
+    "ISR"
+  )
+}
+
+countries <- function() {
+  sort(
+    unique(
+      c(
+        africa_countries(),
+        emro_countries(),
+        searo_countries(),
+        euro_countries_subset()
+      )
+    )
+  )
+}
+
+countries_exclude <- function() {
+  c(
+    "PRK",
+    "IDN",
+    "TLS",
+    "THA"
+  )
+}
+
+
+region_countries <- function() {
+  setdiff(countries(), countries_exclude())
+}
+# # quick check
+# all(region_countries() %in% geodata::country_codes()$ISO3)
+
+# get a shapefile of the region of interest
+library(tidyverse)
+world_country_shapes <- world(path = tempdir())
+keep <- world_country_shapes$GID_0 %in% region_countries()
+region_country_shapes <- world_country_shapes[keep, ]
+region_shape <- terra::aggregate(region_country_shapes)
+
+# buffer the region slightly (10km), and use it to create a raster of the
+# relevant (non-NA) pixels
+region_shape_buffer <- terra::buffer(region_shape, 1e4)
+
+region_raster_mask <- region_shape_buffer %>%
+  terra::rasterize(
+    nichemapr_climate_raster_mask
+  ) %>%
+  crop(
+    region_shape_buffer
+  ) * crop(
+        nichemapr_climate_raster_mask,
+        region_shape_buffer
+      )
+
+# pull out the non-NA cells in this
+coords <- xyFromCell(region_raster_mask, cells(region_raster_mask))
+plot(region_raster_mask)
+points(coords, pch = ".")
+# port the microclimate conditions into the adult survival model
+
+# plug the survival curves (and other An. stephensi temperature parameters) into
+# the temperature suitability function(s)
+
+# run this over all pixels to map year-round microclimate (and outside
+# microclimate) suitability
+
+
+
+
+
+
+
