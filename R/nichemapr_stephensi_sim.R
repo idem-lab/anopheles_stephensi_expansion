@@ -430,6 +430,236 @@ lines(survival_microclimate ~ dates,
 # plug the survival curves (and other An. stephensi temperature parameters) into
 # the temperature suitability function(s)
 
+# install and load Oli's tempsuit package, and wrap it up in a more sane
+# interface so it does't constantly segfault and overwrite objects
+
+# install.packages("data/tempsuitcalc_0.1.tar.gz", type = "source", repos = NULL)
+
+library(tempsuitcalc)
+# need:
+# timestep pathogen degree days (for EIP?)
+# timestep oviposition rate degree days
+# timestep survival probability MATRIX
+# dummy object for pathogen suitability index timeseries
+# dummy object for oviposition suitability index timeseries
+
+
+# for myovi (degree days contributing to the length of the gonotrophic cycle)
+# apply the focks quation from Brady et al. to these studies, using greta:
+# https://doi.org/10.1371%2Fjournal.pone.0055777
+# https://doi.org/10.1371%2Fjournal.pbio.2003489
+# (data at: https://datadryad.org/stash/dataset/doi:10.5061%2Fdryad.74839)
+
+paaijmans_mean_gono <- tibble::tribble(
+  ~temp, ~days,
+  22, 5.2,
+  24, 5.0,
+  26, 4.1
+) %>%
+  mutate(
+    study = "Paaijmans"
+  )
+shapiro_mean_gono <- readxl::read_excel(
+  "data/ovi_data/PLoS.Biology.DataFigures.Supplemental.xlsx",
+  sheet = "Fig.4",
+  range = "A1:B7") %>%
+  rename(
+    temp = Temp,
+    days = `G-cycle`
+  ) %>%
+  mutate(
+    temp = str_remove(temp, pattern = "ºC"),
+    temp = as.numeric(temp),
+    study = "shapiro"
+  )
+
+mean_gono <- bind_rows(
+  paaijmans_mean_gono,
+  shapiro_mean_gono
+)
+
+# fit a Bayesian model of degree day accumulation for the first gonotrophic
+# cycle
+library(greta)
+
+# based on eq from Brady et al., gives the development rate per hour at the
+# given temperature
+focks_gono_rate <- function(t_c, rho, h_a, h_h, t_0_5) {
+  # convert to kelvin
+  t_k <- t_c + 273.15
+  # compute equation components
+  a <- rho * t_k / 298
+  b <- exp((h_a / 1.987) * ((1 / 298) - (1 / t_k)) )
+  c <- exp((h_h / 1.987) * ((1 / t_0_5) - (1 / t_k)) )
+  # return gonotrophic cycle development rate per hour
+  a * b / (1 - c)
+}
+
+# take the prior means and initial values from Sharpe & de Michelle (via Focks)
+# estimates for Ae. aegypti
+rho_mean <- 0.00898
+h_a_kcal_mean <- 15725.23 / 1000
+h_h_mcal_mean <- 1756481.07 / 1000000
+t_0_5_mean <- 447.17
+
+rho <- normal(rho_mean, 1, truncation = c(0, Inf))
+h_a_kcal <- normal(h_a_kcal_mean, 100, truncation = c(0, Inf))
+h_h_mcal <- normal(h_h_mcal_mean, 10, truncation = c(0, Inf))
+t_0_5 <- normal(t_0_5_mean, 10, truncation = c(0, Inf))
+obs_sd <- normal(0, 1, truncation = c(0, Inf))
+
+h_a <- h_a_kcal * 1000
+h_h <- h_h_mcal * 1000000
+
+dev_rates <- focks_gono_rate(shapiro_mean_gono$temp,
+                             rho = rho,
+                             h_a = h_a,
+                             h_h = h_h,
+                             t_0_5 = t_0_5)
+
+# convert these to the expected number of days
+expected_days <- 1 / (dev_rates * 24)
+distribution(shapiro_mean_gono$days) <- normal(expected_days, obs_sd)
+m <- model(rho, h_a, h_h, t_0_5, obs_sd)
+
+n_chains <- 4
+inits <- replicate(n_chains,
+             initials(
+               rho = rho_mean,
+               h_a_kcal = h_a_kcal_mean,
+               h_h_mcal = h_h_mcal_mean,
+               t_0_5 = t_0_5_mean
+             ),
+             simplify = FALSE)
+
+draws <- mcmc(m, chains = n_chains,
+              initial_values = inits)
+
+# pull out the parameter values to use as priors
+plot(draws)
+summary(draws)
+
+range(shapiro_mean_gono$temp)
+new_temps <- seq(-20, 60, length.out = 100)
+new_gc_rates <- focks_gono_rate(new_temps,
+                           rho = rho,
+                           h_a = h_a,
+                           h_h = h_h,
+                           t_0_5 = t_0_5)
+
+new_gcs <- 1 / (new_gc_rates * 24)
+
+post_means <- as.list(summary(draws)$statistics[, "Mean"])
+sims <- calculate(new_gcs,
+                  rho,
+                  h_a_kcal,
+                  h_h_mcal,
+                  t_0_5,
+                  values = draws, nsim = 1000)
+preds <- sims[[1]][, , 1]
+# preds <- calculate(new_gcs, values = post_means, nsim = 1000)[[1]][, , 1]
+
+pred_means <- colMeans(preds)
+pred_quants <- apply(preds, 2, quantile, c(0.025, 0.975))
+par(mfrow = c(1, 1),
+    mar = c(5, 5, 2, 2))
+plot(pred_means ~ new_temps,
+     type = "n",
+     ylim = c(0, 9),
+     xlim = c(18, 38),
+     axes = FALSE,
+     xlab = "Temperature (celsius)",
+     ylab = "Mean gonotrophic cycle (days)")
+polygon(x = c(new_temps, rev(new_temps)),
+       y = c(pred_quants[1, ], rev(pred_quants[2, ])),
+       lty = 0,
+       col = grey(0.9))
+lines(pred_means ~ new_temps, pch = 16)
+axis(1)
+axis(2, las = 2)
+points(shapiro_mean_gono$days ~ shapiro_mean_gono$temp,
+       col = "red", pch = 15)
+box()
+
+# create a spline interpolation of this function for use in the cohort
+# simulation
+gc_function <- splinefun(x = new_temps,
+                         y = pred_means)
+
+# tempsuitcalc::cohort.simulate()
+
+# R version, for testing logic
+
+
+cohort_simulate_R <- function(myDD, myovi, myP, Zout, Zoutovi) {
+  
+  # length of full timeseries
+  L <- as.integer(10416 / 2)
+  # length of burnin portion?
+  L2 <- as.integer(792 / 2)
+  
+  # non-biting (juvenile?) period?
+  MnB <- as.integer(47 / 2)
+  
+  # mosquito infection rate per timestep
+  Kappa <- 0.01
+  # Y <- s <- t <- vector("numeric", L2)
+  
+  for (i in 0:(L - L2)) {
+    
+    # start new cohort
+    M <- 100
+    
+    # for(v in 0:L2){
+    #   # set s and Y to 0
+    #   s[v] <- 0.0
+    #   t[v] <- 0.0
+    #   Y[v] <- 0.0
+    # }
+    Y <- s <- t <- rep(0, L2)
+    
+    for (j in 0:MnB) {
+      # apply normal mortality whilst not biting
+      M = M * myP[j, i]
+    }
+    
+    for (k in MnB:L2) {
+      # loop through biting age mosquitoes
+      
+      # infect mosquitoes
+      Y[k] <- Kappa * M
+      
+      for (r in MnB:k) {
+        
+        # evaluate degree-day accumulation
+        # for pathogen and oviposition?
+        s[r] <- s[r] + myDD[(i + r)]
+        t[r] <- t[r] + myovi[(i + r)]
+        
+        # apply mortality to infected mosquitoes
+        Y[r] <- Y[r] * myP[k, (i + r)]
+        
+        # if they have reached virus incubation
+        if (s[r] >= 1) {
+          # add them to infectious population
+          Zout[(i + r)] <- Zout[(i + r)] + Y[r]
+        }
+        
+        # if they have reached oviposition
+        if (t[r] >= 1){
+          # add them to parous population
+          Zoutovi[(i + r)] <- Zoutovi[(i + r)] + Y[r]
+        }
+      }
+      
+      # apply mortality to uninfected mosquitoes
+      M <- M * myP[k, i]
+    }
+  }
+  return(1)
+}
+
+
 # run this over all pixels to map year-round microclimate (and outside
 # microclimate) suitability
 
