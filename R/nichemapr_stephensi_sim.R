@@ -430,25 +430,8 @@ lines(survival_microclimate ~ dates,
 # plug the survival curves (and other An. stephensi temperature parameters) into
 # the temperature suitability function(s)
 
-# install and load Oli's tempsuit package, and wrap it up in a more sane
-# interface so it does't constantly segfault and overwrite objects
-
-# install.packages("data/tempsuitcalc_0.1.tar.gz", type = "source", repos = NULL)
-
-library(tempsuitcalc)
-# need:
-# timestep pathogen degree days (for EIP?)
-# timestep oviposition rate degree days
-# timestep survival probability MATRIX
-# dummy object for pathogen suitability index timeseries
-# dummy object for oviposition suitability index timeseries
-
-
-# for myovi (degree days contributing to the length of the gonotrophic cycle)
-# apply the focks quation from Brady et al. to these studies, using greta:
-# https://doi.org/10.1371%2Fjournal.pone.0055777
-# https://doi.org/10.1371%2Fjournal.pbio.2003489
-# (data at: https://datadryad.org/stash/dataset/doi:10.5061%2Fdryad.74839)
+# model the duration of the gonotrophic cycle for An stephensi, from Shapiro et
+# al. using the enzyme kinetics model of Focks et al.
 
 paaijmans_mean_gono <- tibble::tribble(
   ~temp, ~days,
@@ -551,14 +534,10 @@ new_gcs <- 1 / (new_gc_rates * 24)
 
 post_means <- as.list(summary(draws)$statistics[, "Mean"])
 sims <- calculate(new_gcs,
-                  rho,
-                  h_a_kcal,
-                  h_h_mcal,
-                  t_0_5,
+                  new_gc_rates,
                   values = draws, nsim = 1000)
-preds <- sims[[1]][, , 1]
-# preds <- calculate(new_gcs, values = post_means, nsim = 1000)[[1]][, , 1]
 
+preds <- sims$new_gcs[, , 1]
 pred_means <- colMeans(preds)
 pred_quants <- apply(preds, 2, quantile, c(0.025, 0.975))
 par(mfrow = c(1, 1),
@@ -583,81 +562,243 @@ box()
 
 # create a spline interpolation of this function for use in the cohort
 # simulation
+pred_rates <- colMeans(sims$new_gc_rates[, , 1])
 gc_function <- splinefun(x = new_temps,
-                         y = pred_means)
+                         y = pred_rates)
 
-# tempsuitcalc::cohort.simulate()
+# function for EIP of pathogens
+eip_function <- function(temp, pathogen = c("falciparum", "vivax"), period_days = 1 / 12) {
+  pathogen <- match.arg(pathogen)
+  # use degree day model as in Gething:
+  # https://doi.org/10.1186/1756-3305-4-92
+  phi <- switch(pathogen,
+                vivax = 105,
+                falciparum = 111)
+  temp_min <- switch(pathogen,
+                  vivax = 14.5,
+                  falciparum = 16)
+  
+  degree_days <- pmax(0, temp - temp_min) * period_days
 
-# R version, for testing logic
-
-
-cohort_simulate_R <- function(myDD, myovi, myP, Zout, Zoutovi) {
-  
-  # length of full timeseries
-  L <- as.integer(10416 / 2)
-  # length of burnin portion?
-  L2 <- as.integer(792 / 2)
-  
-  # non-biting (juvenile?) period?
-  MnB <- as.integer(47 / 2)
-  
-  # mosquito infection rate per timestep
-  Kappa <- 0.01
-  # Y <- s <- t <- vector("numeric", L2)
-  
-  for (i in 0:(L - L2)) {
-    
-    # start new cohort
-    M <- 100
-    
-    # for(v in 0:L2){
-    #   # set s and Y to 0
-    #   s[v] <- 0.0
-    #   t[v] <- 0.0
-    #   Y[v] <- 0.0
-    # }
-    Y <- s <- t <- rep(0, L2)
-    
-    for (j in 0:MnB) {
-      # apply normal mortality whilst not biting
-      M = M * myP[j, i]
-    }
-    
-    for (k in MnB:L2) {
-      # loop through biting age mosquitoes
-      
-      # infect mosquitoes
-      Y[k] <- Kappa * M
-      
-      for (r in MnB:k) {
-        
-        # evaluate degree-day accumulation
-        # for pathogen and oviposition?
-        s[r] <- s[r] + myDD[(i + r)]
-        t[r] <- t[r] + myovi[(i + r)]
-        
-        # apply mortality to infected mosquitoes
-        Y[r] <- Y[r] * myP[k, (i + r)]
-        
-        # if they have reached virus incubation
-        if (s[r] >= 1) {
-          # add them to infectious population
-          Zout[(i + r)] <- Zout[(i + r)] + Y[r]
-        }
-        
-        # if they have reached oviposition
-        if (t[r] >= 1){
-          # add them to parous population
-          Zoutovi[(i + r)] <- Zoutovi[(i + r)] + Y[r]
-        }
-      }
-      
-      # apply mortality to uninfected mosquitoes
-      M <- M * myP[k, i]
-    }
-  }
-  return(1)
+  # scale it 1 is full development
+  degree_days / phi
 }
+
+
+# install and load Oli's tempsuit package, and wrap it up in a more sane
+# interface so it does't constantly segfault and overwrite objects
+
+# install.packages("data/tempsuitcalc_0.1.tar.gz", type = "source", repos = NULL)
+
+library(tempsuitcalc)
+
+# create survival
+myP_vec <- survival(temperature = temperature,
+                    humidity = humidity,
+                    model = survival_model, 
+                    use_wild_correction = TRUE,
+                    period_days = 1 / 12)
+
+# replicate into matrix (we don't have an age effect in this survival model)
+myP <- myP_vec %*% matrix(1, 1, max_length)
+
+# write a function to more safely handle the inputs and outputs
+simulate_suitability <- function(temperature_hourly,
+                            humidity_hourly,
+                            pathogen = c("vivax", "falciparum")) {
+
+  pathogen <- match.arg(pathogen)
+  
+  # create indices to pull out 2h bin values, with burnin and burnout  
+  bin_index_2h_year <- seq(1, 365 * 24, by = 2)
+  bin_index_2h_burnout <- seq(1, 5 * 7 * 24 - 24, by = 2)
+  bin_index_2h_burnin <- 365 * 24 - rev(seq(1, 5 * 7 * 24, by = 2)) - 2
+  bin_index_2h <- c(bin_index_2h_burnin, bin_index_2h_year, bin_index_2h_burnout)
+  max_length <- as.integer(10416 / 2)
+  stopifnot(identical(max_length, length(bin_index_2h)))
+  
+  # pull out full timeseries
+  temperature <- temperature_hourly[bin_index_2h]
+  humidity <- humidity_hourly[bin_index_2h]
+  
+  # compute life history parameters over time
+  myDD <- eip_function(temperature, pathogen = pathogen)
+  myovi <- gc_function(temperature)
+  
+  # create survival
+  myP_vec <- survival(temperature = temperature,
+                      humidity = humidity,
+                      model = survival_model, 
+                      use_wild_correction = TRUE,
+                      period_days = 1 / 12)
+  
+  # replicate into matrix (we don't have an age effect in this survival model)
+  myP <- myP_vec %*% matrix(1, 1, max_length)
+  
+  # create dummy output vectors
+  Zout <- rep(0, max_length)
+  Zoutovi <- rep(0, max_length)
+  
+  # run simulation (overwrites Zout and Zoutovi in place :0 )
+  tempsuitcalc::cohort.simulate(myDD = myDD,
+                                myovi = myovi,
+                                myP = myP,
+                                Zout = Zout,
+                                Zoutovi = Zoutovi)
+  
+  # get index to middle years, and return only these
+  index <- seq_len(365 * 12) + 5 * 7 * 12
+  
+  list(Zout = Zout[index],
+       Zoutovi = Zoutovi[index])
+  
+}
+
+summarise_suitability <- function(Zout){
+  
+  # summarise suitability (number/presence of infectious/reproductive
+  # individuals)
+  Zout_total <- sum(Zout)
+  NID <- (Zout > 0) / 12
+  NID_total <- sum(NID)
+  
+  # sum over weeks, and assign excess days into the last week
+  weeks <- c(rep(seq_len(52), each = 7*12), rep(52, (365 - 52 * 7) * 12))
+  Zout_weekly <- tapply(Zout, weeks, FUN = sum)
+  NID_weekly <- tapply(NID, weeks, FUN = sum)
+  
+  return(
+    list(
+      Zout_total = Zout_total,
+      NID_total = NID_total,
+      Zout_weekly = Zout_weekly,
+      NID_weekly = NID_weekly
+    )
+  )
+}
+
+monthly_means <- function(Zout) {
+  # aggregate outputs by month
+  hours <- seq(1, 365 * 24, by = 2)
+  timestamps <- as_datetime("2023-01-01 00:00:00") + lubridate::hours(hours)
+  months <- lubridate::month(timestamps)
+  tapply(Zout, months, FUN = mean)
+}
+
+# given a latitude and a longitude, model the temperuture and humidity profile
+# at an hourly resolution over an average year, both inside a hypothetical
+# concrete water tank, and out in the open air
+model_conditions <- function(loc) {
+  
+  # model temperature conditions inside a concrete water container (fully shaded,
+  # permanent water, 'rock' surface), and compare them to an
+  # aboveground, unshaded situation in the same location
+  
+  # height above the ground (metres) at which to calculate conditions, substrate
+  # type, and degree of shade in this place - set to 5cm, rock (ie.
+  # concrete) and 100% shade to represent a mosquito resting against side of a
+  # concrete water tank
+  height_m <- 0.05
+  soiltype <- 1
+  shade_perc <- 100
+  wetness_perc <- 100
+  
+  micro <- micro_global(
+    # place
+    loc = loc,
+    timeinterval = 365,
+    # microclimate characteristics
+    Usrhyt = height_m,
+    maxshade = shade_perc,
+    soiltype = soiltype,
+    PCTWET = wetness_perc
+  )
+  
+  # all outputs, hourly resolution for a year
+  list(
+    habitat = list(
+      temperature = micro$shadmet[, "TALOC"],
+      humidity = micro$shadmet[, "RHLOC"]
+    ),
+    outside = list(
+      temperature = micro$metout[, "TAREF"],
+      humidity = micro$metout[, "RH"]
+    )
+  )
+  
+}
+
+# write a wrapper function to run this for a set of pixels, and then profile it
+# to make it run faster
+
+calculate_stephensi_suitability <- function(loc) {
+  
+  # model the microclimates
+  conditions <- model_conditions(loc)
+  
+  results <- list()
+  for (microclimate in c("habitat", "outside")) {
+      
+      habitat_conditions <- conditions[[microclimate]]
+      
+      sim_vivax <- simulate_suitability(
+        temperature_hourly = habitat_conditions$temperature,
+        humidity_hourly = habitat_conditions$humidity,
+        pathogen = "vivax" 
+      )
+      
+      sim_falciparum <- simulate_suitability(
+        temperature_hourly = habitat_conditions$temperature,
+        humidity_hourly = habitat_conditions$humidity,
+        pathogen = "falciparum" 
+      )
+      
+      # summarise these, and enter into outputs
+      
+      results[[microclimate]] <- tibble(
+        microclimate = microclimate,
+        month = format(ISOdate(2023,1:12,1),"%B"),
+        vivax_suitability = monthly_means(sim_vivax$Zout),
+        falciparum_suitability = monthly_means(sim_falciparum$Zout),
+        reproduction_suitability = monthly_means(sim_vivax$Zoutovi),
+        vivax_NID = monthly_means(sim_vivax$Zout > 0),
+        falciparum_NID = monthly_means(sim_falciparum$Zout > 0),
+        reproduction_NID = monthly_means(sim_vivax$Zout > 0)
+      )
+      
+  }
+  
+  bind_rows(results$habitat,
+            results$outside)
+  
+}
+  
+suit <- calculate_stephensi_suitability(loc)
+
+library(ggplot2)
+
+suit %>%
+  mutate(
+    month = factor(month, levels = unique(month))
+  ) %>%
+  ggplot(
+    aes(x = month,
+        y = falciparum_NID,
+        group = microclimate,
+        colour = microclimate)
+  ) +
+  geom_line()
+
+
+# work out why it's so optimistic about outside the habitat - is it because reduced survival
+# doesn't have as much impact as the speed of the gonotrophic cycle or EIP?
+
+# different survival is definitely being passed through.
+
+# maybe the repeated releases are nullifying survival?
+
+
+
 
 
 # run this over all pixels to map year-round microclimate (and outside
