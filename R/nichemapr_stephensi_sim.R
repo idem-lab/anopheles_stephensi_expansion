@@ -72,7 +72,6 @@ loc <- c(40.142981, 8.9972474)
 
 # placename <- "Bangui, CAR"
 # loc <- c(18.561247, 4.365849)
-
 micro <- micro_global(
   # place
   loc = loc,
@@ -357,6 +356,12 @@ region_raster_mask <- region_shape_buffer %>%
 
 # pull out the non-NA cells in this
 coords <- xyFromCell(region_raster_mask, cells(region_raster_mask))
+
+
+# aggregate it 9x to get a lower resolution set of coordinates for first pass -
+# original resolution is ~18.5km at the equator
+region_raster_mask_agg < aggregate(region_raster_mask, 9)
+coords_agg <- xyFromCell(region_raster_mask_agg, cells(region_raster_mask_agg))
 
 # port the microclimate conditions into the adult survival model
 # load the mgcv survival model 
