@@ -1,3 +1,8 @@
+# Refit the models in villeno et al to get and interpolate the posterior
+# predicted relationship against temperature of key life history parameters.
+# Using the aadapted JAGS code from Villeno et al.
+
+# I had to get jags running on my M1 mac, so I did the following:
 # install jags at terminal with: `brew install jags` then install rjags pointing
 # to this jags (modify path to wherever jags is, found with `which jags` at
 # terminal)
@@ -40,11 +45,41 @@ make.briere.samps <- function(coda.samps,
   return(samps)
 }
 
+make.quad.samps<-function(coda.samps, nchains=2, samp.lims=c(151, 5000), sig=TRUE){
+  T0<-Tm<-qd<-sigma<-NULL
+  l1<-samp.lims[1]
+  l2<-samp.lims[2]
+  for(i in 1:nchains){
+    T0<-c(T0, coda.samps[[i]][l1:l2,1])
+    Tm<-c(Tm, coda.samps[[i]][l1:l2,2])
+    qd<-c(qd, coda.samps[[i]][l1:l2,3])
+    if(sig) sigma<-c(sigma, coda.samps[[i]][l1:l2,4])
+  }
+  if(sig){
+    samps<-data.frame(matrix(c(T0, Tm, qd, sigma), ncol=4, byrow=FALSE))
+    names(samps)<-c("T0", "Tm", "qd", "sigma")
+  }
+  else{
+    samps<-data.frame(matrix(c(T0, Tm, qd), ncol=3, byrow=FALSE))
+    names(samps)<-c("T0", "Tm", "qd")
+    
+  }
+  return(samps)
+}
+
 briere<-function(t, c, Tm, T0){
   b=c()
   for (i in 1:length(t))
   {
     if(t[i]>T0 && t[i]<Tm){  b[i]<-(c*t[i]*(t[i]-T0)*sqrt(Tm-t[i]))  }
+    else {b[i]<-0}
+  }
+  b
+}
+quad.2<-function(t, T0, Tm, qd){
+  b=c()
+  for (i in 1:length(t)){
+    if(t[i]>T0 && t[i]<Tm) {b[i]<--qd*(t[i]-T0)*(t[i]-Tm)}
     else {b[i]<-0}
   }
   b
@@ -149,8 +184,22 @@ data_mdr <- data.all %>%
     data.all$trait.name == "mdr",
     data.all$specie == "An. stephensi"
   )
-# plot(data_mdr$T, data_mdr$trait) ## visualize your data
 
+data_pea <- data.all %>%
+  filter(
+    data.all$trait.name == "e2a",
+    data.all$specie == "An. stephensi"
+  )
+
+data_efd <- data.all %>%
+  filter(
+    data.all$trait.name == "efd",
+    data.all$specie == "An. stephensi"
+  )
+
+# # visualize your data
+# plot(data_mdr$T, data_mdr$trait)
+# plot(data_pea$T, data_pea$trait)
 
 ## specify the parameters that control the MCMC
 n.chains <- 5
@@ -199,27 +248,10 @@ tau ~ dgamma(0.0001, 0.0001)
 }"
 
 
-## Concave up quadratic model (mu)
-
-jags_quad.bug <- "model {
-
-for (i in 1:N) {
-Y[i] ~ dnorm(mu[i], tau)T(0,)
-mu[i] <- inter-n.slope*T[i]+qd*T[i]^2
-}
-
-inter ~ dgamma(2,2)
-n.slope ~ dgamma(1, 1)
-qd  ~ dgamma(2,2)
-sigma<-1/tau
-tau ~ dnorm(1000, 1/500)
-
-}"
-
 
 ## Use jags.model for the specific model with the appropiate
 ## default priors
-mdr_model <- jags.model(textConnection(jags_briere.bug),  ## change the model according to the trait. This example is for MDR
+mdr_model <- jags.model(textConnection(jags_briere.bug),
                     data = list(
                       Y = data_mdr$trait,
                       T = data_mdr$T,
@@ -232,13 +264,13 @@ mdr_model <- jags.model(textConnection(jags_briere.bug),  ## change the model ac
                       c = 0.00007
                     ),
                     n.adapt = n.adapt) 
-update(mdr_model, n.burn)
+update(mdr_model, n.samps)
 
 mdr_model_samps_coda <- coda.samples(mdr_model,
                             c('c','Tm', 'T0', 'sigma'),
                             n.samps)
 # ## check for convergence
-# plot(mdr_model_samps, ask = TRUE)
+# plot(mdr_model_samps_coda, ask = TRUE)
 
 ## This command combines the samples from the n.chains into a format
 ## that we can use for further analyses. Use appropiate model for specific traits
@@ -246,24 +278,114 @@ mdr_samps <- make.briere.samps(mdr_model_samps_coda,
                            nchains = n.chains,
                            samp.lims = c(1, n.samps))
 
+
+
+# do PEA and EFD as convex down
+
+pea_model <- jags.model(textConnection(jags_quad.bug),
+                        data = list(
+                          Y = data_pea$trait,
+                          T = data_pea$T,
+                          N = length(data_pea$T)
+                        ),
+                        n.chains = n.chains,
+                        inits = list(
+                          Tm = 31,
+                          T0 = 5,
+                          qd = 0.00007
+                        ),
+                        n.adapt = n.adapt) 
+update(pea_model, n.samps)
+
+pea_model_samps_coda <- coda.samples(pea_model,
+                                     c('qd','Tm', 'T0', 'sigma'),
+                                     n.samps)
+# ## check for convergence
+# plot(pea_model_samps_coda, ask = TRUE)
+
+## This command combines the samples from the n.chains into a format
+## that we can use for further analyses. Use appropiate model for specific traits
+pea_samps <- make.quad.samps(pea_model_samps_coda,
+                             nchains = n.chains,
+                             samp.lims = c(1, n.samps))
+
+efd_model <- jags.model(textConnection(jags_quad.bug),
+                        data = list(
+                          Y = data_efd$trait,
+                          T = data_efd$T,
+                          N = length(data_efd$T)
+                        ),
+                        n.chains = n.chains,
+                        inits = list(
+                          Tm = 31,
+                          T0 = 5,
+                          qd = 0.00007
+                        ),
+                        n.adapt = n.adapt) 
+update(efd_model, n.samps)
+update(efd_model, n.samps)
+
+efd_model_samps_coda <- coda.samples(efd_model,
+                                     c('qd','Tm', 'T0', 'sigma'),
+                                     n.samps)
+# ## check for convergence
+plot(efd_model_samps_coda, ask = TRUE)
+
+## This command combines the samples from the n.chains into a format
+## that we can use for further analyses. Use appropiate model for specific traits
+efd_samps <- make.quad.samps(efd_model_samps_coda,
+                             nchains = n.chains,
+                             samp.lims = c(1, n.samps))
+
 ## Next we want to use the parameter samples to get posterior samples
 ## of the temperature rsponses themselves
 Temps <- seq(-20, 80, by = 0.1)
 mdr_out <- make.sims.temp.resp(sim = "briere",
-                           mdr_samps,
-                           Temps,
-                           thinned = seq(1, n.samps, length = 1000)) ## Example for MDR
+                               mdr_samps,
+                               Temps,
+                               thinned = seq(1, n.samps, length = 1000)) ## Example for MDR
+pea_out <- make.sims.temp.resp(sim = "quad",
+                               pea_samps,
+                               Temps,
+                               thinned = seq(1, n.samps, length = 1000)) ## Example for MDR
+efd_out <- make.sims.temp.resp(sim = "quad",
+                               efd_samps,
+                               Temps,
+                               thinned = seq(1, n.samps, length = 1000)) ## Example for MDR
 
 mdr_post_mean <- rowMeans(mdr_out$fits)
+pea_post_mean <- rowMeans(pea_out$fits)
+efd_post_mean <- rowMeans(efd_out$fits)
 
 mdr_function_raw <- splinefun(Temps, mdr_post_mean)
 mdr_function <- function(temperature) {
   pmax(0, mdr_function_raw(temperature))
 }
 
-# plot(mdr_function, xlim = c(-20, 80), type = "l")
-# min(mdr_function(Temps))
+pea_function_raw <- splinefun(Temps, pea_post_mean)
+pea_function <- function(temperature) {
+  pmax(0, pea_function_raw(temperature))
+}
+
+efd_function_raw <- splinefun(Temps, efd_post_mean)
+efd_function <- function(temperature) {
+  pmax(0, efd_function_raw(temperature))
+}
+
+plot(mdr_function, xlim = c(-20, 80), type = "l")
+points(data_mdr$T, data_mdr$trait)
+min(mdr_function(Temps))
+
+plot(pea_function, xlim = c(-20, 80), type = "l")
+points(data_pea$T, data_pea$trait)
+min(pea_function(Temps))
+
+plot(efd_function, xlim = c(-20, 80), type = "l", ylim = range(data_efd$trait))
+points(data_efd$T, data_efd$trait)
+min(efd_function(Temps))
 
 
 saveRDS(mdr_function, file = "data/life_history_params/mdr_function.RDS")
+saveRDS(pea_function, file = "data/life_history_params/pea_function.RDS")
+saveRDS(efd_function, file = "data/life_history_params/efd_function.RDS")
 
