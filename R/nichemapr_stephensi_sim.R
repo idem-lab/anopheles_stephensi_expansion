@@ -80,7 +80,8 @@ micro <- micro_global(
   Usrhyt = height_m,
   maxshade = shade_perc,
   soiltype = soiltype,
-  PCTWET = wetness_perc
+  PCTWET = wetness_perc,
+  runmoist = 0
   # puddle characteristics
   # rainmult = rainmult,
   # maxpool = maxpool,
@@ -92,6 +93,9 @@ microclimate_temperature_all <- micro$shadmet[, "TALOC"]
 microclimate_humidity_all <- micro$shadmet[, "RHLOC"] 
 outside_temperature_all <- micro$metout[, "TAREF"]
 outside_humidity_all <- micro$metout[, "RH"]
+
+# add this in to population model
+microclimate_water_temperature_all <- micro$shadsoil[, "D0cm"]
 
 temp_range <- range(c(microclimate_temperature_all, outside_temperature_all))
 rh_range <- range(c(microclimate_humidity_all, outside_humidity_all))
@@ -711,17 +715,19 @@ model_conditions <- function(loc) {
     Usrhyt = height_m,
     maxshade = shade_perc,
     soiltype = soiltype,
-    PCTWET = wetness_perc
+    PCTWET = wetness_perc,
+    runmoist = 0
   )
   
   # all outputs, hourly resolution for a year
   list(
     habitat = list(
-      temperature = micro$shadmet[, "TALOC"],
-      humidity = micro$shadmet[, "RHLOC"]
+      air_temperature = micro$shadmet[, "TALOC"],
+      humidity = micro$shadmet[, "RHLOC"],
+      water_temperature <- micro$shadsoil[, "D0cm"]
     ),
     outside = list(
-      temperature = micro$metout[, "TAREF"],
+      air_temperature = micro$metout[, "TAREF"],
       humidity = micro$metout[, "RH"]
     )
   )
@@ -742,13 +748,13 @@ calculate_stephensi_suitability <- function(loc) {
       habitat_conditions <- conditions[[microclimate]]
       
       sim_vivax <- simulate_suitability(
-        temperature_hourly = habitat_conditions$temperature,
+        temperature_hourly = habitat_conditions$air_temperature,
         humidity_hourly = habitat_conditions$humidity,
         pathogen = "vivax" 
       )
       
       sim_falciparum <- simulate_suitability(
-        temperature_hourly = habitat_conditions$temperature,
+        temperature_hourly = habitat_conditions$air_temperature,
         humidity_hourly = habitat_conditions$humidity,
         pathogen = "falciparum" 
       )
