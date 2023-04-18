@@ -799,9 +799,201 @@ suit %>%
 # work out why it's so optimistic about outside the habitat - is it because reduced survival
 # doesn't have as much impact as the speed of the gonotrophic cycle or EIP?
 
-# different survival is definitely being passed through.
+# Dumping 100 mosquitoes per day into the environment makes the EIP effect more
+# dominant than the survival effect. We need actual population dynamics
 
-# maybe the repeated releases are nullifying survival?
+# Build a simple two stage model (aquatic stages and adults), with aquatic stage
+# density dependence and possibly temperature (aquatic survival), adult
+# temperature and humidity survival (adult survival) larval development (aquatic
+# -> adult rate) as a function of water temperature, and gonotrophic cycle
+# (adult -> aquatic rate) as a function of air temperature. Construct as a
+# dynamics matrix.
+
+# Parameters to find:
+# - An stephensi larval density dependence (or use An gambiae) Evans
+# - An stephensi larval survival by water temperature Villena
+# - An stephensi larval development by temperature Villena
+
+# use Villena et al for the temperature effects
+# https://doi.org/10.1002/ecy.3685
+
+# constructors for the different functions
+
+# we'll need to reestimate the curves from the dataset, as the posteriors and
+# parameter estimates are not provided for stephensi
+# *facepalm emoji*
+
+
+# for MDR, PDR, a
+make_villena_asymmetric <- function(tmin, tmax, gamma) {
+  function(temperature) {
+    gamma * temperature * (temperature - tmin) * sqrt(tmax - temperature)
+  }
+}
+
+# for bc, P_EA, EFD
+make_villena_concave_down <- function(tmin, tmax, gamma) {
+  function(temperature) {
+    gamma * (temperature - tmin) * (temperature - tmax)
+  }
+}
+
+# for mu
+make_villena_concave_up <- function(alpha, beta, gamma) {
+  function(temperature) {
+    alpha * temperature ^ 2 - beta * temperature + gamma
+  }
+}
+
+
+# Villena (and Johnson 2015) don't define MDR, but cites Mordecai 2013 which
+# defines it as 'larval development rate' and refers to Bayoh and Lindsay. Bayoh
+# and lindsay do a number of differnt things, but it's clear from the data in
+# villena that they are using the time from egg to adult, so MDR is the inverse
+# of the full duration of the aquatic stage
+
+# We need to re-estimate parameters for MDR (larval development, or rate of
+# moving from the larval to adult stages, in days; asymmetric), PEA (proportion
+# of eggs surviving to adulthood; concave down), and EFD (eggs per female per
+# day; concave down)
+
+# We will use our own adult mortality rate, and the larval density dependence
+# from Evans (calibrated against the temperature effects as a multiplier)
+library(tidyverse)
+traits <- read.csv("data/villena_posteriors/oswaldov-Malaria_Temperature-16c9d29/data/traits.csv",
+                   row.names = 1) %>%
+  filter(
+    specie == "An. stephensi",
+    trait.name %in% c("mdr", "e2a", "efd")
+  ) %>%
+  select(
+    trait = trait.name,
+    temperature = T,
+    value = trait,
+    ref
+  ) %>%
+  mutate(
+    trait = case_when(
+      trait == "e2a" ~ "pea",
+      .default = trait
+    )
+  ) %>%
+  group_by(
+    trait
+  ) %>%
+  mutate(
+    ref_code = as.numeric(factor(ref))
+  ) %>%
+  ungroup()
+  
+pea <- traits %>%
+  filter(trait == "pea") %>%
+  select(
+    -trait
+  )
+
+efd <- traits %>%
+  filter(trait == "efd") %>%
+  select(
+    -trait
+  )
+
+mdr <- traits %>%
+  filter(trait == "mdr") %>%
+  select(
+    -trait
+  )
+  
+# now fit these, using the priors in villena
+
+# return a briere function of temperature, using the positive censoring of
+# villena et al, but replaced with a softplus rectifier (to improve sampling)
+
+
+rectify <- function(x, scale = 1000) {
+  log1pe(x * scale) / scale
+}
+make_briere <- function(c, T0, Tm) {
+  function(temperature) {
+    mu_temp <- c * temperature * (temperature - T0) * sqrt(rectify(Tm - temperature))
+    rectify(mu_temp)
+  }
+}
+
+library(greta)
+sigma <- normal(0, 1, truncation = c(0, Inf))
+c <- gamma(shape = 1, rate = 10)
+Tm <- uniform(25, 45)
+T0 <- uniform(0, 24)
+
+briere <- make_briere(c, T0, Tm)
+mu <- briere(mdr$temperature)
+
+# calculate(mu_temp, nsim = 5)[[1]][, , 1]
+distribution(mdr$value) <- normal(mu, sigma, truncation = c(0, Inf))
+m <- model(sigma, c, Tm, T0)
+
+n_chains <- 50
+inits <- replicate(n_chains,
+                   initials(
+                     sigma = abs(rnorm(1, 0, 1)),
+                     c = rgamma(1, shape = 1, rate = 10),
+                     Tm = runif(1, 25, 45),
+                     T0 = runif(1, 0, 24)
+                   ),
+                   simplify = FALSE)
+
+draws <- mcmc(m,
+              chains = n_chains,
+              sampler = rwmh(),
+              warmup = 10000,
+              initial_values = inits)
+plot(draws)
+coda::gelman.diag(draws, autoburnin = FALSE, multivariate = FALSE)
+
+# why no samply?
+
+# run with JAGS instead?
+new_temps <- seq(0, 45, length.out = 200) 
+new_mu <- briere(new_temps)
+
+sims <- calculate(new_mu, values = draws, nsim = 1000)
+pred_mean <- colMeans(sims$new_mu[, , 1])
+pred_cis <- apply(sims$new_mu[, , 1], 2, quantile, c(0.025, 0.975))
+
+plot(pred_mean ~ new_temps, type = "n",
+     ylim = range(pred_cis))
+polygon(x = c(new_temps, rev(new_temps)),
+        y = c(pred_cis[1, ], rev(pred_cis[2, ])),
+        col = grey(0.9),
+        border = NA)
+lines(pred_mean ~ new_temps)
+points(mdr$value ~ mdr$temperature)
+
+
+sims <- calculate(mu, values = draws, nsim = 1000)
+pred_mean <- colMeans(sims$mu[, , 1])
+pred_cis <- apply(sims$mu[, , 1], 2, quantile, c(0.025, 0.975))
+
+plot(pred_mean ~ mdr$temperature, type = "n",
+     ylim = range(pred_cis))
+polygon(x = c(mdr$temperature, rev(mdr$temperature)),
+        y = c(pred_cis[1, ], rev(pred_cis[2, ])),
+        col = grey(0.9),
+        border = NA)
+lines(pred_mean ~ mdr$temperature)
+points(mdr$value ~ mdr$temperature)
+
+# Y[i] ~ dnorm(mu[i], tau)T(0,)
+# mu.temp[i] <- c*T[i]*(T[i]-T0)*sqrt((Tm-T[i])*(Tm>T[i]))
+# mu[i] <- 0*(mu.temp[i]<0) + mu.temp[i]*(mu.temp[i]>0)
+# c ~ dgamma(1,10)
+# Tm ~ dunif(25,45)
+# T0  ~ dunif(0, 24)
+# sigma<-1/tau
+# tau ~ dgamma(0.0001, 0.0001)
+# construct time-varying matrices for variable sized timesteps
+
 
 
 
