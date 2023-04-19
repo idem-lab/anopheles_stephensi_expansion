@@ -235,7 +235,8 @@ tau ~ dgamma(0.0001, 0.0001)
 jags_quad.bug <- "model {
 
 for (i in 1:N) {
-Y[i] ~ dnorm(mu[i], tau)T(0,)
+Y[i] ~ dnorm(mu[i], tau)
+# Y[i] ~ dnorm(mu[i], tau)T(0,)
 mu[i] <- -qd*(T[i]-T0)*(T[i]-Tm)*((T[i]>T0))*((T[i]<Tm))
 }
 
@@ -323,13 +324,12 @@ efd_model <- jags.model(textConnection(jags_quad.bug),
                         ),
                         n.adapt = n.adapt) 
 update(efd_model, n.samps)
-update(efd_model, n.samps)
 
 efd_model_samps_coda <- coda.samples(efd_model,
                                      c('qd','Tm', 'T0', 'sigma'),
                                      n.samps)
 # ## check for convergence
-plot(efd_model_samps_coda, ask = TRUE)
+# plot(efd_model_samps_coda, ask = TRUE)
 
 ## This command combines the samples from the n.chains into a format
 ## that we can use for further analyses. Use appropiate model for specific traits
@@ -357,14 +357,16 @@ mdr_post_mean <- rowMeans(mdr_out$fits)
 pea_post_mean <- rowMeans(pea_out$fits)
 efd_post_mean <- rowMeans(efd_out$fits)
 
+# how to save these functions in a way that keeps the environment info with them?
+
 mdr_function_raw <- splinefun(Temps, mdr_post_mean)
 mdr_function <- function(temperature) {
   pmax(0, mdr_function_raw(temperature))
 }
 
-pea_function_raw <- splinefun(Temps, pea_post_mean)
-pea_function <- function(temperature) {
-  pmax(0, pea_function_raw(temperature))
+pea_function_temperature_raw <- splinefun(Temps, pea_post_mean)
+pea_function_temperature <- function(temperature) {
+  pmax(0, pea_function_temperature_raw(temperature))
 }
 
 efd_function_raw <- splinefun(Temps, efd_post_mean)
@@ -376,16 +378,137 @@ plot(mdr_function, xlim = c(-20, 80), type = "l")
 points(data_mdr$T, data_mdr$trait)
 min(mdr_function(Temps))
 
-plot(pea_function, xlim = c(-20, 80), type = "l")
+plot(pea_function_temperature, xlim = c(-20, 80), type = "l")
 points(data_pea$T, data_pea$trait)
-min(pea_function(Temps))
+min(pea_function_temperature(Temps))
 
 plot(efd_function, xlim = c(-20, 80), type = "l", ylim = range(data_efd$trait))
 points(data_efd$T, data_efd$trait)
 min(efd_function(Temps))
 
+# add density dependence effect to pea (survival from egg to adult) too - From
+# Evans Figure 1D&F
+library(tidyverse)
+stephensi_survival <- read_csv("data/life_history_params/evans/data/clean/CSVs/survival.csv",
+                               show_col_types = FALSE) %>%
+  filter(
+    Species == "Stephensi",
+    AeDens == 0
+  ) %>%
+  mutate(
+    NumInitial = StDens / 2
+  ) %>%
+  select(
+    sex = Sex,
+    temperature = Temp,
+    density = StDens,
+    replicate = Replicate,
+    initial = NumInitial,
+    survived = NumSurvived
+  ) %>%
+  mutate(
+    # add a random ID for the experimental trial (M and F in together, but
+    # multiple replicates per trial)
+    trial = paste(temperature, density, replicate, sep = "_"),
+    trial_id = as.numeric(factor(trial)),
+    # add in the logit survival probability (from egg to adult) at no density as
+    # a covariate for the temperature effect
+    logit_survival_zero_density = qlogis(pea_function_temperature(temperature)),
+    # remove the intercept term, and just add a parameter for the males
+    is_male = as.numeric(sex == "Male")
+  )
 
-saveRDS(mdr_function, file = "data/life_history_params/mdr_function.RDS")
-saveRDS(pea_function, file = "data/life_history_params/pea_function.RDS")
-saveRDS(efd_function, file = "data/life_history_params/efd_function.RDS")
+# model this
+library(lme4)
+stephensi_dd_model <- glmer(
+  cbind(survived, initial - survived) ~ -1 +
+    # no intercept, but a scaling factor on the Villena survival prob to get the
+    # 0-density curve in terms of the survival prob used here (cumulative over
+    # an undisclosed period)
+    logit_survival_zero_density +
+    # dummy for sex differences
+    is_male +
+    # logit-linear effect of density
+    density +
+    # random effect for the trial id (unique per replicate/condition
+    # interaction)
+    (1|trial_id),
+  family = binomial,
+  data = stephensi_survival
+)
+
+summary(stephensi_dd_model)
+
+# residuals look fine (not surprising, given random effects)
+plot(stephensi_dd_model)
+
+# female is the default, and we don't care about the scaling on the survival
+# probability (the daily egg to adult survival prob from Villena is more
+# useful), so just scale that by the density term on the logit scale
+density_effect <- fixef(stephensi_dd_model)["density"]
+
+# create final function
+pea_function <- function(temperature, density) {
+  temp_effect <- pea_function_temperature(temperature)
+  plogis(qlogis(temp_effect) + density_effect * density)
+}
+
+# plot the model
+survival_summary <- stephensi_survival %>%
+  filter(
+    sex == "Female"
+  ) %>%
+  group_by(temperature, density) %>%
+  summarise(
+    across(c(initial, survived), sum),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    prob = survived / initial
+  ) %>%
+  select(-initial, -survived)
+
+temp <- seq(10, 40, length.out = 100)
+dens <- seq(0, 128, length.out = 100)
+all <- expand_grid(dens, temp)
+resp <- apply(all, 1, function(x) pea_function(temperature = x["temp"],
+                                               density = x["dens"]))
+dim(resp) <- c(length(temp), length(dens))
+contour(x = temp,
+        y = dens,
+        z = resp,
+        levels = c(0.01, seq(0.1, 0.9, length.out = 9)),
+        xlab = "Temperature (celsius)",
+        ylab = "Density (larvae per 250ml)",
+        main = "Daily probability of survival (egg to emergence)\nas a function of temperature and larval density")
+
+points(density ~ temperature,
+       data = survival_summary,
+       pch = 21,
+       bg = grey(1 - prob),
+       col = grey(0.4))
+
+
+# note that the fitted EFD curve is a down quadratic, as described in the paper
+# and SI, but the one plotted in the MS is clearly a Gaussian. I also had to
+# remove the observation truncation, since a bunch of 0s were observed and these
+# were being thrown out, and flip the sign on the 'quad.2' function bove to
+# match the downward quadratic
+
+# save the data for all of these functions for later use in modelling
+mdr_function_data <- data.frame(temperature = Temps,
+                                value = mdr_function(Temps))
+
+efd_function_data <- data.frame(temperature = Temps,
+                                value = efd_function(Temps))
+
+pea_function_data <- data.frame(temperature = Temps,
+                                raw_value = pea_function_temperature(Temps),
+                                density_coef = density_effect)
+
+# can't save the functions as the environments get lost
+
+saveRDS(mdr_function_data, file = "data/life_history_params/mdr_function_data.RDS")
+saveRDS(pea_function_data, file = "data/life_history_params/pea_function_data.RDS")
+saveRDS(efd_function_data, file = "data/life_history_params/efd_function_data.RDS")
 
