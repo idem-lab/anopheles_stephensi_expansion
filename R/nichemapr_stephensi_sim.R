@@ -679,6 +679,24 @@ suit %>%
   theme_minimal()
 
 
+suit %>%
+  filter(
+    microclimate == "habitat"
+  ) %>%
+  mutate(
+    month = factor(month, levels = unique(month))
+  ) %>%
+  ggplot(
+    aes(
+      x = month,
+      y = relative_abundance,
+      group = location
+    )
+  ) +
+  geom_line() +
+  facet_wrap(~location) +
+  theme_minimal()
+
 # it seems like population persistence is possible outside the tank in Niamey,
 # Niger, but not inside the water tank. Perhaps the outside water temperature is
 # incorrect because it's actually soil?
@@ -869,7 +887,7 @@ coords <- xyFromCell(region_raster_mask, cells(region_raster_mask))
 
 # aggregate it 9x to get a lower resolution set of coordinates for first pass -
 # original resolution is ~18.5km at the equator
-region_raster_mask_agg < aggregate(region_raster_mask, 9)
+region_raster_mask_agg <- aggregate(region_raster_mask, 9)
 coords_agg <- xyFromCell(region_raster_mask_agg, cells(region_raster_mask_agg))
 
 
