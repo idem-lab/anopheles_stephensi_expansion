@@ -181,20 +181,23 @@ data.all <- read.csv("data/life_history_params/oswaldov-Malaria_Temperature-16c9
 ## Select the trait of interest. Here we showed as an example MDR for An. gambiae
 data_mdr <- data.all %>%
   filter(
-    data.all$trait.name == "mdr",
-    data.all$specie == "An. stephensi"
+    trait.name == "mdr",
+    specie == "An. stephensi"
   )
 
 data_pea <- data.all %>%
   filter(
-    data.all$trait.name == "e2a",
-    data.all$specie == "An. stephensi"
+    trait.name == "e2a",
+    specie == "An. stephensi",
+    # can't find a study with this name and year that does larval survival, only
+    # adult
+    ref != "Murdock et al. 2016" 
   )
 
 data_efd <- data.all %>%
   filter(
-    data.all$trait.name == "efd",
-    data.all$specie == "An. stephensi"
+    trait.name == "efd",
+    specie == "An. stephensi"
   )
 
 # # visualize your data
@@ -281,35 +284,7 @@ mdr_samps <- make.briere.samps(mdr_model_samps_coda,
 
 
 
-# do PEA and EFD as convex down
-
-pea_model <- jags.model(textConnection(jags_quad.bug),
-                        data = list(
-                          Y = data_pea$trait,
-                          T = data_pea$T,
-                          N = length(data_pea$T)
-                        ),
-                        n.chains = n.chains,
-                        inits = list(
-                          Tm = 31,
-                          T0 = 5,
-                          qd = 0.00007
-                        ),
-                        n.adapt = n.adapt) 
-update(pea_model, n.samps)
-
-pea_model_samps_coda <- coda.samples(pea_model,
-                                     c('qd','Tm', 'T0', 'sigma'),
-                                     n.samps)
-# ## check for convergence
-# plot(pea_model_samps_coda, ask = TRUE)
-
-## This command combines the samples from the n.chains into a format
-## that we can use for further analyses. Use appropiate model for specific traits
-pea_samps <- make.quad.samps(pea_model_samps_coda,
-                             nchains = n.chains,
-                             samp.lims = c(1, n.samps))
-
+# do EFD as convex down
 efd_model <- jags.model(textConnection(jags_quad.bug),
                         data = list(
                           Y = data_efd$trait,
@@ -344,29 +319,18 @@ mdr_out <- make.sims.temp.resp(sim = "briere",
                                mdr_samps,
                                Temps,
                                thinned = seq(1, n.samps, length = 1000)) ## Example for MDR
-pea_out <- make.sims.temp.resp(sim = "quad",
-                               pea_samps,
-                               Temps,
-                               thinned = seq(1, n.samps, length = 1000)) ## Example for MDR
 efd_out <- make.sims.temp.resp(sim = "quad",
                                efd_samps,
                                Temps,
                                thinned = seq(1, n.samps, length = 1000)) ## Example for MDR
 
 mdr_post_mean <- rowMeans(mdr_out$fits)
-pea_post_mean <- rowMeans(pea_out$fits)
 efd_post_mean <- rowMeans(efd_out$fits)
 
-# how to save these functions in a way that keeps the environment info with them?
-
+# spline these functions
 mdr_function_raw <- splinefun(Temps, mdr_post_mean)
 mdr_function <- function(temperature) {
   pmax(0, mdr_function_raw(temperature))
-}
-
-pea_function_temperature_raw <- splinefun(Temps, pea_post_mean)
-pea_function_temperature <- function(temperature) {
-  pmax(0, pea_function_temperature_raw(temperature))
 }
 
 efd_function_raw <- splinefun(Temps, efd_post_mean)
@@ -378,16 +342,77 @@ plot(mdr_function, xlim = c(-20, 80), type = "l")
 points(data_mdr$T, data_mdr$trait)
 min(mdr_function(Temps))
 
-plot(pea_function_temperature, xlim = c(-20, 80), type = "l")
-points(data_pea$T, data_pea$trait)
-min(pea_function_temperature(Temps))
-
 plot(efd_function, xlim = c(-20, 80), type = "l", ylim = range(data_efd$trait))
 points(data_efd$T, data_efd$trait)
 min(efd_function(Temps))
 
-# add density dependence effect to pea (survival from egg to adult) too - From
-# Evans Figure 1D&F
+
+
+# note that the fitted EFD curve is a down quadratic, as described in the paper
+# and SI, but the one plotted in the MS is clearly a Gaussian. I also had to
+# remove the observation truncation, since a bunch of 0s were observed and these
+# were being thrown out, and flip the sign on the 'quad.2' function bove to
+# match the downward quadratic
+
+
+# refit the PEA data as a daily rate, using a cox proportional hazards model,
+# with the exposure time given by the expected time to emergence from the MDR
+# model. Ie. the daily survival probability can be lower at temperatures where
+# the MDR is high, since they need to survive for less long. This enables us to
+# model larval survival on a much shorter timestep
+
+data_pea_survival <- data_pea %>%
+  mutate(
+    initial = 50,  # from Paaijmans
+    survived = round(initial * trait),
+    died = initial - survived,
+    exposure_period = 1 / mdr_function(temperature = T),
+    exposure_offset = log(exposure_period) 
+  ) %>%
+  rename(
+    temperature = T
+  )
+
+library(mgcv)
+# model daily survival probabilities at these temperatures via a proportional
+# hazards model, with the exposure period given by the MDR model
+pea_mortality_model <- gam(
+  cbind(died, survived) ~ s(temperature),
+  family = stats::binomial("cloglog"),
+  offset = exposure_offset,
+  data = data_pea_survival,
+  # enforce extra smoothing to make this consistent with the others 
+  gamma = 30
+)
+
+# plot(pea_mortality_model)
+
+# predict daily survival to the temperature range
+pred_df <- data.frame(temperature = Temps)
+pea_daily_preds <- 1 - predict(pea_mortality_model, pred_df, type = "response")
+
+# plot(pea_daily_preds ~ Temps, type = "l")
+# rug(data_pea$T)
+
+# # check it matches observed full-period mortalities by recombining with MDR
+# pea_overall_preds <- pea_daily_preds ^ (1 / mdr_function(pred_df$temperature))
+# 
+# plot(pea_overall_preds ~ Temps, type = "l",
+#      xlim = c(10, 40),
+#      ylim = c(0, 1))
+# points(data_pea$trait ~ data_pea$T)
+# # good fit!
+
+
+pea_function_temperature_raw <- splinefun(Temps, pea_daily_preds)
+pea_function_temperature <- function(temperature) {
+  pmax(0, pea_function_temperature_raw(temperature))
+}
+plot(pea_function_temperature, xlim = c(-20, 80), type = "l")
+min(pea_function_temperature(Temps))
+
+# now add density dependence effect to daily pea (survival from egg to adult)
+# too - From Evans Figure 1D&F
 library(tidyverse)
 stephensi_survival <- read_csv("data/life_history_params/evans/data/clean/CSVs/survival.csv",
                                show_col_types = FALSE) %>%
@@ -445,7 +470,7 @@ plot(stephensi_dd_model)
 # female is the default, and we don't care about the scaling on the survival
 # probability (the daily egg to adult survival prob from Villena is more
 # useful), so just scale that by the density term on the logit scale
-density_effect <- fixef(stephensi_dd_model)["density"]
+density_effect <- fixef(stephensi_dd_model)[["density"]]
 
 # create final function
 pea_function <- function(temperature, density) {
@@ -489,12 +514,6 @@ points(density ~ temperature,
        col = grey(0.4))
 
 
-# note that the fitted EFD curve is a down quadratic, as described in the paper
-# and SI, but the one plotted in the MS is clearly a Gaussian. I also had to
-# remove the observation truncation, since a bunch of 0s were observed and these
-# were being thrown out, and flip the sign on the 'quad.2' function bove to
-# match the downward quadratic
-
 # save the data for all of these functions for later use in modelling
 mdr_function_data <- data.frame(temperature = Temps,
                                 value = mdr_function(Temps))
@@ -506,9 +525,9 @@ pea_function_data <- data.frame(temperature = Temps,
                                 raw_value = pea_function_temperature(Temps),
                                 density_coef = density_effect)
 
-# can't save the functions as the environments get lost
+# can't save the functions as the environments get lost, so save the data and
+# reconstitute the functions later
 
 saveRDS(mdr_function_data, file = "data/life_history_params/mdr_function_data.RDS")
 saveRDS(pea_function_data, file = "data/life_history_params/pea_function_data.RDS")
 saveRDS(efd_function_data, file = "data/life_history_params/efd_function_data.RDS")
-

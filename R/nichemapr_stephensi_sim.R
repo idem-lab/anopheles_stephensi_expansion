@@ -48,6 +48,7 @@
 # request_era5(request = req, uid = uid, out_path = era5_dir)
 
 library(NicheMapR)
+library(tidyverse)
 
 # model temperature conditions inside a concrete water container (fully shaded,
 # permanent water, 'rock' surface), and compare them to an
@@ -64,14 +65,16 @@ wetness_perc <- 100
 
 # set lat longs of the location
 
-placename <- "Awash, Ethiopia"
-loc <- c(40.142981, 8.9972474)
+# placename <- "Awash, Ethiopia"
+# loc <- c(40.142981, 8.9972474)
 
 # placename <- "Niamey, Niger"
 # loc <- c(2.0840132, 13.5127664)
 
-# placename <- "Bangui, CAR"
-# loc <- c(18.561247, 4.365849)
+placename <- "Bangui, CAR"
+loc <- c(18.561247, 4.365849)
+
+
 micro <- micro_global(
   # place
   loc = loc,
@@ -299,7 +302,8 @@ model_conditions <- function(loc) {
     ),
     outside = list(
       air_temperature = micro$metout[, "TAREF"],
-      humidity = micro$metout[, "RH"]
+      humidity = micro$metout[, "RH"],
+      water_temperature = micro$soil[, "D0cm"]
     )
   )
   
@@ -343,21 +347,24 @@ mdr_function_data <- readRDS("data/life_history_params/mdr_function_data.RDS")
 pea_function_data <- readRDS("data/life_history_params/pea_function_data.RDS")
 efd_function_data <- readRDS("data/life_history_params/efd_function_data.RDS")
 
+# do the splinefun bit externally
+mdr_raw_fun <- with(mdr_function_data, splinefun(temperature, value))
+efd_raw_fun <- with(efd_function_data, splinefun(temperature, value))
+# pea_temp_raw_fun <- with(pea_function_data, splinefun(temperature, raw_value))
+logit_pea_temp_raw_fun <- with(pea_function_data, splinefun(temperature, qlogis(raw_value)))
+
 mdr_function <- function(temperature) {
-  raw_fun <- with(mdr_function_data, splinefun(temperature, value))
-  pmax(0, raw_fun(temperature))
+  pmax(0, mdr_raw_fun(temperature))
 }  
 
 efd_function <- function(temperature) {
-  raw_fun <- with(efd_function_data, splinefun(temperature, value))
-  pmax(0, raw_fun(temperature))
+  pmax(0, efd_raw_fun(temperature))
 }  
 
 # need to do 2d spline function
 pea_function <- function(temperature, density) {
-  raw_fun <- with(pea_function_data, splinefun(temperature, raw_value))
-  raw_vals <- pmax(0, raw_fun(temperature))
-  plogis(qlogis(raw_vals) + density * pea_function_data$density_coef[1])
+  logit_raw_vals <- logit_pea_temp_raw_fun(temperature)
+  plogis(logit_raw_vals + density * pea_function_data$density_coef[1])
 }  
 
 # plot these and check they don't produce negatives
@@ -401,17 +408,6 @@ plot(surv_25rh,
 min(survival(temperature = seq(-20, 100, length.out = 100),
                  humidity = sample(seq(0, 100, length.out = 100))))
 
-# how to scale the proportion of eggs surviving to adulthood, as a function of
-# temperature, since we apply mortality on each (hourly) timestep - use the
-# expected average duration of the stage at that temperature
-
-pea_daily_function <- function(temperature, density) {
-  pea_overall <- pea_function(temperature, density)
-  expected_duration_days <- 1 / mdr_function(temperature)
-  pea_daily <- pea_overall ^ mdr_function(temperature)
-  pea_daily
-}
-
 # pea_function is a function of temperature and density (larvae per 250ml
 # water), the others are functions of temperature
 
@@ -425,58 +421,178 @@ pea_daily_function <- function(temperature, density) {
 conditions <- model_conditions(loc)
 scaling <- 1/24
 mdr <- mdr_function(conditions$habitat$water_temperature) ^ scaling
-pea <- pea_daily_function(conditions$habitat$water_temperature, density = 0) ^ scaling
-pea64 <- pea_daily_function(conditions$habitat$water_temperature, density = 64) ^ scaling
+pea <- pea_function(conditions$habitat$water_temperature, density = 0) ^ scaling
+pea64 <- pea_function(conditions$habitat$water_temperature, density = 64) ^ scaling
 efd <- efd_function(conditions$habitat$air_temperature) ^ scaling
 surv <- survival(temperature = conditions$habitat$air_temperature,
                  humidity = conditions$habitat$humidity) ^ scaling
 
 
-
-
 par(mfrow = c(2, 2),
     oma = rep(0, 4),
-    mar = c(3, 3, 2, 1) + 0.1)
+    mar = c(3, 3, 4, 1) + 0.1)
 plot(surv ~ conditions$day,
      type = "l",
      xlim = c(10, 14),
      xlab = "", ylab = "",
-     main = "adult survival (hourly)")
+     main = "adult survival prob")
 plot(pea ~ conditions$day,
      type = "l",
      xlim = c(10, 14),
+     ylim = range(pea, pea64),
      xlab = "", ylab = "",
-     main = "aquatic survival (hourly)")
+     main = "aquatic survival prob \n(low and high density)")
 lines(pea64 ~ conditions$day,
       lty = 2)
 plot(mdr ~ conditions$day,
      type = "l",
      xlim = c(10, 14),
      xlab = "day of year", ylab = "",
-     main = "larval development rate (hourly)")
+     main = "larval development rate")
 plot(efd ~ conditions$day,
      type = "l",
      xlim = c(10, 14),
      xlab = "day of year", ylab = "",
-     main = "egg laying (hourly)")
+     main = "egg laying rate")
 
-# why is aquatic survival so janky?
-plot(pea_function(conditions$habitat$water_temperature,
-                  density = 0) ~ conditions$day,
-     xlim = c(10, 14), type = "l")
+# put this into a population dynamic simulation model
 
-library(tidyverse)
+# write a function to construct the matrix appropriately, given the larval
+# density in the previous timestep
 
-plot(conditions$habitat$water_temperature ~conditions$day,
-     xlim = c(10, 14), type = "l")
+create_matrix <- function(state, water_temperature, mdr, efd, surv, timestep = 1 / 24) {
+  
+  # given the previous state, and temperature, compute daily pea
+  pea <- pea_function(temperature = water_temperature,
+                      density = state[1])
+  
+  # convert all of these to the required timestep (survivals cumuatlive, rates
+  # linear)
+  pea_step <- pea ^ timestep
+  surv_step <- surv ^ timestep
+  mdr_step <- mdr * timestep
+  efd_step <- efd * timestep
+  
+  # construct the matrix
+  #     L                A
+  # L   pea * (1-mdr)    surv * efd
+  # A   pea * mdr        surv
+  matrix(
+    c(
+      pea_step * (1 - mdr_step), # top left
+      pea_step * (mdr_step), # bottom left
+      surv_step * efd_step, # top right
+      surv_step # bottom right
+    ),
+    nrow = 2,
+    ncol = 2
+  )
+  
+}
+
+# iterate the state of the model
+iterate_state <- function(state, t, water_temperature, mdr, efd, surv) {
+  mat <- create_matrix(state = state,
+                       water_temperature = water_temperature[t],
+                       mdr = mdr[t], efd = efd[t], surv = surv[t])  
+  mat %*% state
+}
+# simulate for a full timeseries, with a year of burnin
+
+simulate_population <- function(conditions, initial_state = rep(100, 2)) {
+ 
+  # add whole year of burnin
+  n_times <- length(conditions$water_temperature)
+  index <- rep(seq_len(n_times), 2)
+  
+  # pull out timeseries needed for simulating
+  water_temperature <- conditions$water_temperature[index]
+  mdr <- mdr_function(conditions$water_temperature[index])
+  efd <- efd_function(conditions$air_temperature[index])
+  surv <- survival(temperature = conditions$air_temperature[index],
+                   humidity = conditions$humidity[index])
+  
+  # simulate the population
+  n <- length(index)
+  states <- matrix(0, n, 2)
+  colnames(states) <- c("aquatic", "adult")
+  state <- initial_state
+  
+  for (t in seq_len(n)) {
+    state <- iterate_state(state, t = t,
+                           water_temperature = water_temperature,
+                           mdr = mdr, efd = efd, surv = surv)
+    states[t, ] <- state
+  }
+
+  # keep only the second year (post burnin)  
+  keep_index <- tail(seq_along(index), n_times)
+  states[keep_index, ]  
+}
 
 
-# this is killing larvae when the temperature temporarily drops below T0, how to
-# avoid this? degree day type model modification? Reparameterise without using
-# hard boundaries?
+conditions <- model_conditions(loc)
+states <- simulate_population(conditions$habitat)
 
+par(mfrow = c(2, 1),
+    mar = c(4, 4, 1, 2) + 0.1)
+plot(states[, 1] ~ conditions$day,
+     ylab = "aquatic stages",
+     xlab = "",
+     ylim = c(0, max(states[, 1])),
+     type = "l")
+plot(states[, 2] ~ conditions$day,
+     ylab = "adults",
+     type = "l",
+     ylim = c(0, max(states[, 2])),
+     xlab = "day")
 
+summarise_dynamics <- function(states, surface_area_m2 = 1) {
+  
+  # given a habitat surace area in square metres, get the population multiplier to
+  # scale up the experimental density dependence to get the absolute population
+  # sizes for the given pool of water. The experiments (Evans et al.) has 250ml
+  # water in a 'quart size mason jar', which is rather quaint, but not
+  # particularly specific. I'm assuming it's a Ball brand 'regular mouth canning
+  # jar'. According to masonjarlifestyle.com, that has a 2 3/8" internal
+  # diameter. In real money, that's 6.0325cm, for an area of 28.5814687428cm^2,
+  # or 0.00285814687m2.
+  multiplier <- surface_area_m2 / 0.00285814687
+  states <- states * multiplier
+  
+  # summarise monthly
+  hours <- seq(1, 365 * 24)
+  timestamps <- as_datetime("2023-01-01 00:00:00") + lubridate::hours(hours)
+  months <- lubridate::month(timestamps)
+  
+  # based on this volume of water, we consider the species cannot persist if
+  # there is not at least 1 larva or 1 adult at all times, calculate this for
+  # each month (we can summarise annually later and see if all months are
+  # suitable)
+  min_larvae <- tapply(states[, 1], months, min)
+  min_adults <- tapply(states[, 2], months, min)
+  
+  # calculate the average number of adults present at any given
+  # time, in each month
+  adult_mean_abundance <- tapply(states[, 2], months, mean)
 
+  data.frame(
+    month = 1:12,
+    persistence = min_larvae > 0.5 | min_adults > 0.5,
+    relative_abundance = adult_mean_abundance
+  )  
+    
+}
+
+# need to summarise with e.g. year-round persistence and average number of
+# mosquitoes
+
+# we can calculate adult lifespan and combine with EIP to get an R0 for
+# different malarias?
+
+# speed this up? It's fairly fast already
+
+# wrap it up and summarise it at least
 
 
 # write a wrapper function to run this for a set of pixels, and then profile it
@@ -490,32 +606,14 @@ calculate_stephensi_suitability <- function(loc) {
   results <- list()
   for (microclimate in c("habitat", "outside")) {
       
+      # pull out the appropriate conditions and run the simulation
       habitat_conditions <- conditions[[microclimate]]
-      
-      sim_vivax <- simulate_suitability(
-        temperature_hourly = habitat_conditions$air_temperature,
-        humidity_hourly = habitat_conditions$humidity,
-        pathogen = "vivax" 
-      )
-      
-      sim_falciparum <- simulate_suitability(
-        temperature_hourly = habitat_conditions$air_temperature,
-        humidity_hourly = habitat_conditions$humidity,
-        pathogen = "falciparum" 
-      )
-      
+      population_states <- simulate_population(conditions = habitat_conditions)
+    
       # summarise these, and enter into outputs
-      
-      results[[microclimate]] <- tibble(
-        microclimate = microclimate,
-        month = format(ISOdate(2023,1:12,1),"%B"),
-        vivax_suitability = monthly_means(sim_vivax$Zout),
-        falciparum_suitability = monthly_means(sim_falciparum$Zout),
-        reproduction_suitability = monthly_means(sim_vivax$Zoutovi),
-        vivax_NID = monthly_means(sim_vivax$Zout > 0),
-        falciparum_NID = monthly_means(sim_falciparum$Zout > 0),
-        reproduction_NID = monthly_means(sim_vivax$Zout > 0)
-      )
+      summary <- summarise_dynamics(population_states)
+      summary$microclimate <- microclimate
+      results[[microclimate]] <- summary
       
   }
   
@@ -523,8 +621,31 @@ calculate_stephensi_suitability <- function(loc) {
             results$outside)
   
 }
-  
-suit <- calculate_stephensi_suitability(loc)
+
+# almost all of the computation time is in the fortran microclimate model, so
+# not worth speeding up
+# library(profvis)
+# profvis(
+#   suit <- calculate_stephensi_suitability(loc)
+# )
+
+# placename <- "Awash, Ethiopia"
+# loc <- c(40.142981, 8.9972474)
+suit_awash <- calculate_stephensi_suitability(c(40.142981, 8.9972474))
+
+# placename <- "Niamey, Niger"
+# loc <- c(2.0840132, 13.5127664)
+suit_niamey <- calculate_stephensi_suitability(c(2.0840132, 13.5127664))
+
+# placename <- "Bangui, CAR"
+# loc <- c(18.561247, 4.365849)
+suit_bangui <- calculate_stephensi_suitability(c(18.561247, 4.365849))
+
+suit <- bind_rows(
+  mutate(suit_awash, location = "Awash, Ethiopia"),
+  mutate(suit_niamey, location = "Niamey, Niger"),
+  mutate(suit_bangui, location = "Bangui, CAR"),
+)
 
 library(ggplot2)
 
@@ -534,12 +655,33 @@ suit %>%
   ) %>%
   ggplot(
     aes(x = month,
-        y = falciparum_NID,
+        y = relative_abundance,
         group = microclimate,
         colour = microclimate)
   ) +
-  geom_line()
+  geom_line() +
+  facet_wrap(~location) +
+  theme_minimal()
 
+
+suit %>%
+  mutate(
+    month = factor(month, levels = unique(month))
+  ) %>%
+  ggplot(
+    aes(x = month,
+        y = persistence,
+        group = microclimate,
+        colour = microclimate)
+  ) +
+  geom_line() +
+  facet_wrap(~location) +
+  theme_minimal()
+
+
+# it seems like population persistence is possible outside the tank in Niamey,
+# Niger, but not inside the water tank. Perhaps the outside water temperature is
+# incorrect because it's actually soil?
 
 
 
