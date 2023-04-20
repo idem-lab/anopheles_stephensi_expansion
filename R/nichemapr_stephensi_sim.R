@@ -889,10 +889,97 @@ coords <- xyFromCell(region_raster_mask, cells(region_raster_mask))
 # original resolution is ~18.5km at the equator
 region_raster_mask_agg <- aggregate(region_raster_mask, 9)
 coords_agg <- xyFromCell(region_raster_mask_agg, cells(region_raster_mask_agg))
+nrow(coords_agg)
 
 
+# get pixels as a list
+coords_list <- coords_agg %>%
+  as_tibble() %>%
+  split(seq_len(nrow(.)))
+
+# run suitability for all pixels, sequentially as nichemapr seems to bug out in multisession
+library(future.apply)
+plan(sequential)
+
+time_agg <- system.time(
+  results_list <- future_lapply(coords_list, calculate_stephensi_suitability)
+)
+
+# time in minutes - 41 for aggregated
+time_agg["elapsed"] / 60
 
 
+# add on the coordinates
+index_list <- lapply(seq_along(coords_list), function(x) tibble(cell_index = x))
+
+results <- mapply(bind_cols, results_list, coords_list, index_list, SIMPLIFY = FALSE) %>%
+  bind_rows() %>%
+  `rownames<-`(NULL)
+
+head(results)
+tail(results)
+
+results_annual <- results %>%
+  filter(
+    microclimate == "habitat"
+  ) %>%
+  group_by(
+    cell_index,
+    x,
+    y,
+    microclimate
+  ) %>%
+  summarise(
+    months_suitable = sum(persistence),
+    relative_abundance = mean(relative_abundance),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    relative_abundance = case_when(
+      months_suitable == 0 ~ 0,
+      .default = relative_abundance
+    )
+  )
 
 
+months_suitable_agg <- annual_relative_abundance_agg <- region_raster_mask_agg
+names(months_suitable_agg) <- "months suitable"
+names(annual_relative_abundance_agg) <- "relative abundance (annual)"
 
+cell_index <- cellFromXY(region_raster_mask_agg, coords_agg)
+months_suitable_agg[cell_index] <- results_annual$months_suitable
+annual_relative_abundance_agg[cell_index] <- results_annual$relative_abundance
+annual_relative_abundance_agg <- annual_relative_abundance_agg / global(annual_relative_abundance_agg, max, na.rm = TRUE)[[1]]
+# values(months_suitable_agg) <- results_annual$months_suitable
+
+library(tidyterra)
+ggplot() +
+  geom_spatraster(
+    data = months_suitable_agg,
+    aes(fill = `months suitable`)
+  ) +
+  scale_fill_distiller(
+    palette = "Blues",
+    direction = 1,
+    na.value = grey(0.9)
+  ) +
+  guides(fill=guide_legend(title = "Months")) +
+  theme_minimal() +
+  ggtitle("Predicted number of months per year suitable for\nAn. stephensi persistence in microclimate")
+
+ggplot() +
+  geom_spatraster(
+    data = annual_relative_abundance_agg,
+    aes(fill = `relative abundance (annual)`)
+  ) +
+  scale_fill_distiller(
+    palette = "Greens",
+    direction = 1,
+    na.value = grey(0.9), 
+    trans = "sqrt"
+  ) +
+  guides(
+    fill=guide_legend(title = "Suitability")
+  ) +
+  theme_minimal() +
+  ggtitle("Predicted climatic suitability for An. stephensi\ninside a microclimate")
