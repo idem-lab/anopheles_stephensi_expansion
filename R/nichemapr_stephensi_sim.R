@@ -885,15 +885,22 @@ region_raster_mask <- region_shape_buffer %>%
 coords <- xyFromCell(region_raster_mask, cells(region_raster_mask))
 
 
-# aggregate it 9x to get a lower resolution set of coordinates for first pass -
+# aggregate it 2x to get a lower resolution set of coordinates for second pass -
 # original resolution is ~18.5km at the equator
-region_raster_mask_agg <- aggregate(region_raster_mask, 9)
+region_raster_mask_agg <- aggregate(region_raster_mask, 2)
 coords_agg <- xyFromCell(region_raster_mask_agg, cells(region_raster_mask_agg))
 nrow(coords_agg)
 
 
+# find and skip NAs in the global climate raster at these locations (use raster,
+# as terra gives slightly different locations?)
+nichemapr_climate_raster <- raster::brick(paste0(folder, "/global_climate.nc"))
+vals <- raster::extract(nichemapr_climate_raster, coords_agg)
+fine <- apply(!is.na(vals), 1, all)
+valid_cells <- which(fine)
+
 # get pixels as a list
-coords_list <- coords_agg %>%
+coords_list <- coords_agg[valid_cells, ] %>%
   as_tibble() %>%
   split(seq_len(nrow(.)))
 
@@ -904,6 +911,16 @@ plan(sequential)
 time_agg <- system.time(
   results_list <- future_lapply(coords_list, calculate_stephensi_suitability)
 )
+
+# # site long 35.3333333333333 lat 32
+# 
+# dodgy <- which(near(coords_agg[valid_cells, "x"], 35.3333333333333) &
+#         near(coords_agg[valid_cells, "y"], 32))
+# # dodgy <- 2728
+# 
+# tmp <- calculate_stephensi_suitability(coords_list[[dodgy]])
+# 
+# nrow(coords_agg)
 
 # time in minutes - 41 for aggregated
 time_agg["elapsed"] / 60
@@ -946,7 +963,7 @@ months_suitable_agg <- annual_relative_abundance_agg <- region_raster_mask_agg
 names(months_suitable_agg) <- "months suitable"
 names(annual_relative_abundance_agg) <- "relative abundance (annual)"
 
-cell_index <- cellFromXY(region_raster_mask_agg, coords_agg)
+cell_index <- cellFromXY(region_raster_mask_agg, coords_agg[valid_cells, ])
 months_suitable_agg[cell_index] <- results_annual$months_suitable
 annual_relative_abundance_agg[cell_index] <- results_annual$relative_abundance
 annual_relative_abundance_agg <- annual_relative_abundance_agg / global(annual_relative_abundance_agg, max, na.rm = TRUE)[[1]]
@@ -983,3 +1000,20 @@ ggplot() +
   ) +
   theme_minimal() +
   ggtitle("Predicted climatic suitability for An. stephensi\ninside a microclimate")
+
+
+# note: we could consider switching to the terraclimate inputs and run over
+# actual time? It might not be much slower to run for a decade, given overheads
+# in the microclimate model
+
+# need to check model with Mike Kearney, and consder doing an outside water
+# source model too
+
+# update the adult survival model to include data from Krajacich et al. (2020)
+# https://doi.org/10.1186/s13071-020-04276-y, with an intercept term on study
+# and preferentially using that one as the colony is younger (less lab-adapted)
+# and survival is longer, more consistent with field observations of long-lived
+# An. gambiae s.l. (possibly aestivation)
+
+# Increase the water volume size when determining the persistence suitability,
+# because popultions will consist of multiple water tanks
