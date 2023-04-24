@@ -950,13 +950,13 @@ results_annual <- results %>%
     months_suitable = sum(persistence),
     relative_abundance = mean(relative_abundance),
     .groups = "drop"
-  ) %>%
-  mutate(
-    relative_abundance = case_when(
-      months_suitable == 0 ~ 0,
-      .default = relative_abundance
-    )
   )
+  # mutate(
+  #   relative_abundance = case_when(
+  #     months_suitable == 0 ~ 0,
+  #     .default = relative_abundance
+  #   )
+  # )
 
 
 months_suitable_agg <- annual_relative_abundance_agg <- region_raster_mask_agg
@@ -1017,3 +1017,217 @@ ggplot() +
 
 # Increase the water volume size when determining the persistence suitability,
 # because popultions will consist of multiple water tanks
+
+
+# try recreating the timeseries of monthly abundance in Whittaker et al. (2023)
+# https://doi.org/10.1073/pnas.2216142120
+jalalabad_loc <- rev(c(34.4198911, 70.4303445))
+lahore_loc <- rev(c(31.4831037, 74.0047326))
+djibouti_loc <- rev(c(11.5747928, 43.0778374))
+bandar_abbas_loc <- rev(c(27.1973499, 55.9655767))
+naypyidaw_loc <- rev(c(19.7470939, 95.9325102))
+
+afghanistan <- calculate_stephensi_suitability(jalalabad_loc) %>%
+  mutate(location = "Afghanistan")
+pakistan <- calculate_stephensi_suitability(lahore_loc) %>%
+  mutate(location = "Pakistan")
+djibouti <- calculate_stephensi_suitability(djibouti_loc) %>%
+  mutate(location = "Djibouti")
+iran <- calculate_stephensi_suitability(bandar_abbas_loc) %>%
+  mutate(location = "Iran")
+myanmar <- calculate_stephensi_suitability(naypyidaw_loc) %>%
+  mutate(location = "Myanmar")
+
+month_letter <- substr(month.abb, 1, 1)
+
+bind_rows(
+  afghanistan,
+  pakistan,
+  djibouti,
+  iran,
+  myanmar
+) %>%
+  filter(
+    microclimate == "habitat"
+  ) %>%
+  mutate(
+    relative_abundance = relative_abundance / max(relative_abundance),
+    month = factor(month.abb[month],
+                   levels = month.abb)
+  ) %>%
+  ggplot(
+    aes(
+      x = month,
+      y = relative_abundance,
+      group = location
+    )
+  ) +
+  scale_x_discrete(
+    labels = month_letter
+  ) +
+  geom_line() +
+  facet_wrap(
+    ~location,
+    nrow = 1
+  ) +
+  theme_minimal()
+
+
+get_rds <- function(url) {
+  tf <- tempfile()
+  download.file(url, tf)
+  readRDS(tf)
+}
+
+
+# read in Whitakker et al extracted data (from forked repo to safeguard against changes)
+whittaker_data <- get_rds("https://github.com/goldingn/stephenseasonality/raw/main/data/systematic_review_results/metadata_and_processed_unsmoothed_counts.rds")
+whittaker_admin1 <- get_rds("https://github.com/goldingn/stephenseasonality/raw/main/data/admin_units/simplified_admin1.rds")
+whittaker_admin2 <- get_rds("https://github.com/goldingn/stephenseasonality/raw/main/data/admin_units/simplified_admin2.rds")
+
+# punjab appears twice here
+admin1 <- whittaker_admin1 %>%
+  select(
+    country = NAME_0,
+    admin1 = NAME_1,
+    shape_admin1 = geometry
+  )
+
+admin2 <- whittaker_admin2 %>%
+  select(
+    country = NAME_0,
+    admin1 = NAME_1,
+    admin2 = NAME_2,
+    shape_admin2 = geometry
+  )
+library(sf)
+  
+
+# get centroids for regions
+
+whittaker_tidied <- whittaker_data %>%
+  as_tibble() %>%
+  left_join(
+    admin1,
+    by = c("country", "admin1")
+  ) %>%
+  left_join(
+    admin2,
+    by = c("country", "admin1", "admin2")
+  ) %>%
+  mutate(
+    shape_admin = case_when(
+      is.na(admin2) ~ shape_admin1,
+      .default = shape_admin2
+    )
+  ) %>%
+  mutate(
+    coords = st_centroid(shape_admin)
+  ) %>%
+  select(
+    -shape_admin1,
+    -shape_admin2,
+    -shape_admin
+  )
+
+whittaker_coords_list <- whittaker_tidied %>%
+  pull(coords) %>%
+  st_coordinates() %>%
+  as_tibble() %>%
+  split(seq_len(nrow(.)))
+
+whittaker_results_list <- lapply(whittaker_coords_list, calculate_stephensi_suitability)
+
+index_list <- lapply(whittaker_tidied$id, function(x) tibble(id = x))
+
+whittaker_results <- mapply(bind_cols, whittaker_results_list, index_list, SIMPLIFY = FALSE) %>%
+  bind_rows() %>%
+  `rownames<-`(NULL)
+
+
+
+whittaker_obs_pred <- whittaker_tidied %>%
+  pivot_longer(
+    cols = month.abb,
+    names_to = "month",
+    values_to = "abundance"
+  ) %>%
+  mutate(
+    month_id = match(month, month.abb)
+  ) %>%
+  left_join(
+    filter(
+      whittaker_results,
+      microclimate == "habitat"
+    ),
+    by = c("id", month_id = "month")
+  ) %>%
+  group_by(id) %>%
+  mutate(
+    abundance = abundance / mean(abundance, na.rm = TRUE),
+    relative_abundance = relative_abundance / mean(relative_abundance)
+  ) %>%
+  # keep only the higher resolution
+  filter(!is.na(admin2))
+
+
+plot_list <- list()
+for (country_name in unique(whittaker_obs_pred$country)) {
+  
+    obs_pred <- whittaker_obs_pred %>%
+      filter(country == country_name)
+    
+    ylims <- range(
+      c(obs_pred$abundance,
+        obs_pred$relative_abundance)
+    )
+  
+    plot_list[[country_name]] <- obs_pred %>%
+      mutate(
+        month = factor(month, levels = month.abb)
+      ) %>%
+      ggplot(
+        aes(
+          y = abundance,
+          x = month,
+          group = id
+        )
+      ) +
+      geom_line(
+        color = grey(0.6)
+      ) +
+      geom_point(
+        color = grey(0.6)
+      ) +
+      geom_line(
+        aes(
+          y = relative_abundance
+        )
+      ) +
+      coord_cartesian(
+        ylim = ylims
+      ) +
+      facet_wrap(~admin2) +
+      theme_minimal() +
+      ggtitle(country_name)
+  
+}
+
+# some good fits (in humid areas?), some poor
+plot(plot_list$India)
+
+# pretty noisy - lots of variation within admin2s
+plot(plot_list$Pakistan)
+
+# peak off by about a month - could be lifespan, as it takes longer to come back
+# up from off season?
+plot(plot_list$Afghanistan)
+
+# way off
+plot(plot_list$Iran)
+plot(plot_list$Myanmar)
+
+# data very noisy, one timeseries, not worth using?
+plot(plot_list$Djibouti)
+
+
