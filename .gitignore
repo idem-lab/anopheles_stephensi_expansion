@@ -41,4 +41,4 @@ vignettes/*.pdf
 *.html
 
 /data
-
+*.DS_Store
