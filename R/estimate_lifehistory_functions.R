@@ -206,35 +206,6 @@ tau ~ dgamma(0.0001, 0.0001)
 
 }"
 
-
-# load the required R packages
-library(rjags)
-library(MASS)
-library(tidyverse)
-
-# Note: I had to get jags running on my M2 mac, so I did the following before
-# loading rjags:
-# Install jags at terminal with: `brew install jags`
-# then install rjags pointing to this jags (modify path to wherever jags is,
-# found with `which jags` at terminal)
-# devtools::install_url("http://sourceforge.net/projects/mcmc-jags/files/rjags/4/rjags_4-4.tar.gz",
-#                       args="--configure-args='--with-jags-include=/opt/homebrew/bin/jags/include/JAGS        
-#                                               --with-jags-lib=/opt/homebrew/bin/jags/lib'")
-
-# load data, provided in the supplemental information to Villena et al.
-data.all <- read.csv("data/life_history_params/oswaldov-Malaria_Temperature-16c9d29/data/traits.csv",
-                     header = TRUE,
-                     row.names = 1)
-
-# Note, I can't find a study with this name and year that does aquatic stage
-# survival, only adult survival, so I am assuming this is a mistake and removing
-# it (6 observations)
-data.all <- data.all %>%
-  filter(
-    !(trait.name == "e2a" & ref == "Murdock et al. 2016") 
-  )
-
-
 define_jags_model <- function(data,
                               model_text,
                               mcmc_params,
@@ -251,9 +222,22 @@ define_jags_model <- function(data,
   
 }
 
+# spline through the prediction and temperaures, and then constrain to be
+# non-negative (as spline can induce negatives)
+positive_spline <- function(pred, temps_out) {
+  
+  function_raw <- splinefun(temps_out, pred)
+  function_positive <- function(temperature) {
+    pmax(0, function_raw(temperature))
+  }
+  
+  function_positive
+  
+}
+
 # make a positive-constrained function from MCMC samples, for the required model
 # type
-make_function <- function(coda_samples,
+make_function_jags <- function(coda_samples,
                           mcmc_params,
                           model_type = c("briere", "quad"),
                           temps_out = seq(-20, 80, by = 0.1)) {
@@ -281,13 +265,7 @@ make_function <- function(coda_samples,
   
   post_mean <- rowMeans(out$fits)
   
-  # spline through this and return (constraining to be positive)
-  function_raw <- splinefun(temps_out, post_mean)
-  function_positive <- function(temperature) {
-    pmax(0, function_raw(temperature))
-  }
-  
-  function_positive
+  positive_spline(post_mean, temps_out)
   
 }
 
@@ -302,7 +280,7 @@ fit_mdr_temp <- function(data,
                            n_samps = 20000,
                            n_burn = 10000
                          ),
-                         plot_draws = TRUE
+                         plot_fit = TRUE
 ) {
   species <- match.arg(species)
   
@@ -326,14 +304,14 @@ fit_mdr_temp <- function(data,
   model_samps_coda <- coda.samples(model,
                                    c("c", "Tm", "T0", "sigma"),
                                    mcmc_params$n_samps)
-  if (plot_draws) {
+  if (plot_fit) {
     # visual check for convergence
     plot(model_samps_coda, ask = TRUE) 
   }
   
-  make_function(model_samps_coda,
-                mcmc_params,
-                model_type = "briere")
+  make_function_jags(model_samps_coda,
+                     mcmc_params,
+                     model_type = "briere")
   
 }
 
@@ -354,7 +332,7 @@ fit_efd_temp <- function(data,
                            n_samps = 20000,
                            n_burn = 10000
                          ),
-                         plot_draws = TRUE
+                         plot_fit = TRUE
 ) {
   species <- match.arg(species)
   
@@ -363,7 +341,7 @@ fit_efd_temp <- function(data,
       trait.name == "efd",
       specie == species
     )
-
+  
   # do EFD as convex down
   model <- define_jags_model(data_sub,
                              jags_quad.bug,
@@ -378,40 +356,149 @@ fit_efd_temp <- function(data,
   model_samps_coda <- coda.samples(model,
                                    c("qd", "Tm", "T0", "sigma"),
                                    mcmc_params$n_samps)
-  if (plot_draws) {
+  if (plot_fit) {
     # visual check for convergence
     plot(model_samps_coda, ask = TRUE) 
   }
   
-  make_function(model_samps_coda,
-                mcmc_params,
-                model_type = "quad")
+  make_function_jags(model_samps_coda,
+                     mcmc_params,
+                     model_type = "quad")
   
 }
+
+# given an mgcv mortality model, return the function for probability of survival
+make_function_mgcv <- function(mortality_model,
+                               temps_out = seq(-20, 80, by = 0.1)) {
+  pred_df <- data.frame(temperature = temps_out)
+  daily_preds <- 1 - predict(mortality_model, pred_df, type = "response")
+  positive_spline(daily_preds, temps_out)
+}
+
+# DAS: Daily probability of survival during aquatic stages, computed from PEA:
+# probability of surviving from egg to adult as a function of temperature,
+# refitting the PEA data as a daily rate, using a cox proportional hazards
+# model, with the exposure time given by the expected time to emergence from the
+# MDR model. Ie. the daily survival probability may be lower at temperatures
+# where the MDR is high, since they need to survive for less long. This enables
+# us to model larval survival on a much shorter timestep
+fit_das_temp <- function(data,
+                         mdr_temp_fun,
+                         species = c("An. stephensi", "An. gambiae"),
+                         plot_fit = TRUE) {
+  
+  if (species != "An. stephensi") {
+    stop ("Not yet implemented")
+  }
+  
+  data_sub <- data %>%
+    filter(
+      trait.name == "e2a",
+      specie == species
+    )
+  
+  data_survival <- data_sub %>%
+    mutate(
+      survived = round(initial * trait),
+      died = initial - survived,
+      exposure_period = 1 / mdr_temp_fun(temperature = T),
+      exposure_offset = log(exposure_period) 
+    ) %>%
+    rename(
+      temperature = T
+    )
+  
+  # model daily survival probabilities at these temperatures via a proportional
+  # hazards model, with the exposure period given by the MDR model
+  mortality_model <- mgcv::gam(
+    cbind(died, survived) ~ s(temperature),
+    family = stats::binomial("cloglog"),
+    offset = exposure_offset,
+    data = data_survival,
+    # enforce extra smoothing to make this consistent with the others 
+    gamma = 30
+  )
+  
+  if (plot_fit) {
+    plot(mortality_model)
+  }
+  
+  # function to return function of temperature
+  make_function_mgcv(mortality_model)
+  
+} 
+
+# given the daily survival rate in aquatic stages (DAS) and the aquatic stage
+# development rate (MDR), return the probability of surviving from an egg to an
+# adult at all (PEA)
+make_pea_temp <- function(das_temp, mdr_temp) {
+  function(temperature) {
+    das_temp(temperature) ^ (1 / mdr_temp(temperature))
+  }
+}
+
+
+# load the required R packages
+library(rjags)
+library(MASS)
+library(tidyverse)
+library(mgcv)
+
+# Note: I had to get jags running on my M2 mac, so I did the following before
+# loading rjags:
+# Install jags at terminal with: `brew install jags`
+# then install rjags pointing to this jags (modify path to wherever jags is,
+# found with `which jags` at terminal)
+# devtools::install_url("http://sourceforge.net/projects/mcmc-jags/files/rjags/4/rjags_4-4.tar.gz",
+#                       args="--configure-args='--with-jags-include=/opt/homebrew/bin/jags/include/JAGS        
+#                                               --with-jags-lib=/opt/homebrew/bin/jags/lib'")
+
+# load data, provided in the supplemental information to Villena et al.
+data.all <- read.csv("data/life_history_params/oswaldov-Malaria_Temperature-16c9d29/data/traits.csv",
+                     header = TRUE,
+                     row.names = 1)
+
+data.all <- data.all %>%
+  # Note, I can't find a study with this name and year that does aquatic stage
+  # survival, only adult survival, so I am assuming this is a mistake and removing
+  # it (6 observations)
+  filter(
+    !(trait.name == "e2a" & ref == "Murdock et al. 2016") 
+  ) %>%
+  # add on the initial number of eggs in the aquatic survival experiements (from
+  # going back to the literature)
+  mutate(
+    initial = case_when(
+      ref == "Paaijmans et al. 2013" & trait.name == "e2a" ~ 50,
+      .default = NA
+    )
+  )
 
 # use Villena et al. code to fit functions for MDR, PEA, EFD, against
 # temperature for An. stephensi
 
 # MDR: mosquito development rate (time to move through aquatic stages from egg
-# to adult) for An. stephensi as a function of temperature
+# to adult) as a function of temperature
 mdr_temp_As <- fit_mdr_temp(data.all, species = "An. stephensi")
-
-# EFD: eggs per female per day for An. stephensi as a function of temperature
-efd_temp_As <- fit_efd_temp(data.all, species = "An. stephensi")
-
-# MDR: mosquito development rate (time to move through aquatic stages from egg
-# to adult) for An. stephensi as a function of temperature
 mdr_temp_Ag <- fit_mdr_temp(data.all, species = "An. gambiae")
 
-# EFD: eggs per female per day for An. stephensi as a function of temperature
+# EFD: eggs per female per day as a function of temperature
+efd_temp_As <- fit_efd_temp(data.all, species = "An. stephensi")
 efd_temp_Ag <- fit_efd_temp(data.all, species = "An. gambiae")
 
+# DAS: daily probability of survival in the aquatic stages (eggs, larvae, pupae)
+das_temp_As <- fit_das_temp(data.all,
+                            mdr_temp_As,
+                            species = "An. stephensi")
+
+# PEA: overall probability of surviving from an egg to an adult
+pea_temp_As <- make_pea_temp(das_temp_As, mdr_temp_As)
 
 
 # do for both species, and do this in ggplot, also with overlays between species
 
 # visualise these
-par(mfrow = c(2, 2))
+par(mfrow = c(3, 2))
 
 plot(mdr_temp_As,
      xlim = c(-20, 80),
@@ -422,19 +509,6 @@ plot(mdr_temp_As,
 data.all %>%
   filter(
     trait.name == "mdr",
-    specie == "An. stephensi"
-  ) %>%
-  points(trait ~ T, data = .)
-
-plot(efd_temp_As,
-     xlim = c(-20, 80),
-     type = "l",
-     xlab = "Temperature (C)",
-     ylab = "EFD",
-     main = "Egg laying, An. stephensi")
-data.all %>%
-  filter(
-    trait.name == "efd",
     specie == "An. stephensi"
   ) %>%
   points(trait ~ T, data = .)
@@ -452,6 +526,34 @@ data.all %>%
   ) %>%
   points(trait ~ T, data = .)
 
+plot(pea_temp_As,
+     xlim = c(-20, 80),
+     type = "l",
+     xlab = "Temperature (C)",
+     ylab = "PEA",
+     main = "Aquatic survival, An. stephensi")
+data.all %>%
+  filter(
+    trait.name == "e2a",
+    specie == "An. stephensi"
+  ) %>%
+  points(trait ~ T, data = .)
+
+plot.new()
+
+plot(efd_temp_As,
+     xlim = c(-20, 80),
+     type = "l",
+     xlab = "Temperature (C)",
+     ylab = "EFD",
+     main = "Egg laying, An. stephensi")
+data.all %>%
+  filter(
+    trait.name == "efd",
+    specie == "An. stephensi"
+  ) %>%
+  points(trait ~ T, data = .)
+
 plot(efd_temp_Ag,
      xlim = c(-20, 80),
      type = "l",
@@ -465,72 +567,6 @@ data.all %>%
   ) %>%
   points(trait ~ T, data = .)
 
-
-
-
-
-# PEA: probability of surviving from egg to adult as a function of temperature
-data_pea <- data.all %>%
-  filter(
-    trait.name == "e2a",
-    specie == "An. stephensi"
-  )
-
-# refit the PEA data as a daily rate, using a cox proportional hazards model,
-# with the exposure time given by the expected time to emergence from the MDR
-# model. Ie. the daily survival probability can be lower at temperatures where
-# the MDR is high, since they need to survive for less long. This enables us to
-# model larval survival on a much shorter timestep
-
-data_pea_survival <- data_pea %>%
-  mutate(
-    initial = 50,  # from Paaijmans
-    survived = round(initial * trait),
-    died = initial - survived,
-    exposure_period = 1 / mdr_function(temperature = T),
-    exposure_offset = log(exposure_period) 
-  ) %>%
-  rename(
-    temperature = T
-  )
-
-library(mgcv)
-# model daily survival probabilities at these temperatures via a proportional
-# hazards model, with the exposure period given by the MDR model
-pea_mortality_model <- gam(
-  cbind(died, survived) ~ s(temperature),
-  family = stats::binomial("cloglog"),
-  offset = exposure_offset,
-  data = data_pea_survival,
-  # enforce extra smoothing to make this consistent with the others 
-  gamma = 30
-)
-
-# plot(pea_mortality_model)
-
-# predict daily survival to the temperature range
-pred_df <- data.frame(temperature = Temps)
-pea_daily_preds <- 1 - predict(pea_mortality_model, pred_df, type = "response")
-
-# plot(pea_daily_preds ~ Temps, type = "l")
-# rug(data_pea$T)
-
-# # check it matches observed full-period mortalities by recombining with MDR
-# pea_overall_preds <- pea_daily_preds ^ (1 / mdr_function(pred_df$temperature))
-# 
-# plot(pea_overall_preds ~ Temps, type = "l",
-#      xlim = c(10, 40),
-#      ylim = c(0, 1))
-# points(data_pea$trait ~ data_pea$T)
-# # good fit!
-
-
-pea_function_temperature_raw <- splinefun(Temps, pea_daily_preds)
-pea_function_temperature <- function(temperature) {
-  pmax(0, pea_function_temperature_raw(temperature))
-}
-plot(pea_function_temperature, xlim = c(-20, 80), type = "l")
-min(pea_function_temperature(Temps))
 
 # now add density dependence effect to daily pea (survival from egg to adult)
 # too - From Evans Figure 1D&F
@@ -559,7 +595,7 @@ stephensi_survival <- read_csv("data/life_history_params/evans/data/clean/CSVs/s
     trial_id = as.numeric(factor(trial)),
     # add in the logit survival probability (from egg to adult) at no density as
     # a covariate for the temperature effect
-    logit_survival_zero_density = qlogis(pea_function_temperature(temperature)),
+    logit_survival_zero_density = qlogis(das_temp_As(temperature)),
     # remove the intercept term, and just add a parameter for the males
     is_male = as.numeric(sex == "Male")
   )
@@ -594,8 +630,8 @@ plot(stephensi_dd_model)
 density_effect <- fixef(stephensi_dd_model)[["density"]]
 
 # create final function
-pea_function <- function(temperature, density) {
-  temp_effect <- pea_function_temperature(temperature)
+das_temp_dens_As <- function(temperature, density) {
+  temp_effect <- das_temp_As(temperature)
   plogis(qlogis(temp_effect) + density_effect * density)
 }
 
@@ -617,7 +653,7 @@ survival_summary <- stephensi_survival %>%
 temp <- seq(10, 40, length.out = 100)
 dens <- seq(0, 128, length.out = 100)
 all <- expand_grid(dens, temp)
-resp <- apply(all, 1, function(x) pea_function(temperature = x["temp"],
+resp <- apply(all, 1, function(x) das_temp_dens_As(temperature = x["temp"],
                                                density = x["dens"]))
 dim(resp) <- c(length(temp), length(dens))
 contour(x = temp,
@@ -642,13 +678,13 @@ mdr_function_data <- data.frame(temperature = Temps,
 efd_function_data <- data.frame(temperature = Temps,
                                 value = efd_function(Temps))
 
-pea_function_data <- data.frame(temperature = Temps,
-                                raw_value = pea_function_temperature(Temps),
+das_function_data <- data.frame(temperature = Temps,
+                                raw_value = das_temp_As(Temps),
                                 density_coef = density_effect)
 
 # can't save the functions as the environments get lost, so save the data and
 # reconstitute the functions later
 
 saveRDS(mdr_function_data, file = "data/life_history_params/mdr_function_data.RDS")
-saveRDS(pea_function_data, file = "data/life_history_params/pea_function_data.RDS")
+saveRDS(das_function_data, file = "data/life_history_params/das_function_data.RDS")
 saveRDS(efd_function_data, file = "data/life_history_params/efd_function_data.RDS")
