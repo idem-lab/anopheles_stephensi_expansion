@@ -387,14 +387,11 @@ fit_das_temp <- function(data,
                          species = c("An. stephensi", "An. gambiae"),
                          plot_fit = TRUE) {
   
-  if (species != "An. stephensi") {
-    stop ("Not yet implemented")
-  }
-  
   data_sub <- data %>%
     filter(
       trait.name == "e2a",
-      specie == species
+      specie == species,
+      !is.na(initial)
     )
   
   data_survival <- data_sub %>%
@@ -416,7 +413,7 @@ fit_das_temp <- function(data,
     offset = exposure_offset,
     data = data_survival,
     # enforce extra smoothing to make this consistent with the others 
-    gamma = 30
+    gamma = 20
   )
   
   if (plot_fit) {
@@ -453,122 +450,111 @@ library(mgcv)
 #                       args="--configure-args='--with-jags-include=/opt/homebrew/bin/jags/include/JAGS        
 #                                               --with-jags-lib=/opt/homebrew/bin/jags/lib'")
 
-# load data, provided in the supplemental information to Villena et al.
-data.all <- read.csv("data/life_history_params/oswaldov-Malaria_Temperature-16c9d29/data/traits.csv",
+# load data, provided in the supplemental information to Villena et al., and clean/augment it
+data_villena <- read.csv("data/life_history_params/oswaldov-Malaria_Temperature-16c9d29/data/traits.csv",
                      header = TRUE,
-                     row.names = 1)
-
-data.all <- data.all %>%
+                     row.names = 1) %>%
   # Note, I can't find a study with this name and year that does aquatic stage
   # survival, only adult survival, so I am assuming this is a mistake and removing
   # it (6 observations)
   filter(
     !(trait.name == "e2a" & ref == "Murdock et al. 2016") 
   ) %>%
+  # Ditto this study, there is a 2004 study by these authors which does adult
+  # survival (3 observations) https://doi.org/10.1079/ber2004316
+  filter(
+    !(trait.name == "e2a" & ref == "Kirby and Lindsay 2009") 
+  ) %>%
   # add on the initial number of eggs in the aquatic survival experiements (from
   # going back to the literature)
   mutate(
     initial = case_when(
+      # https://doi.org/10.1111/gcb.12240
       ref == "Paaijmans et al. 2013" & trait.name == "e2a" ~ 50,
+      # https://doi.org/10.1079/BER2003259
+      ref == "Bayoh and Lindsay 2003" & trait.name == "e2a" ~ 30, 
+      # J VBDs, no doi, initial number not given:
+      # https://www.mrcindia.org/journal/issues/464295.pdf
+      ref == "Olayemi and Ande 2009" & trait.name == "e2a" ~ NA,
       .default = NA
     )
   )
 
-# use Villena et al. code to fit functions for MDR, PEA, EFD, against
-# temperature for An. stephensi
+# use Villena et al. code to fit functions for MDR and EFD, against temperature
+# for An. stephensi, and refit PEA ina. way that enables daily survival
+# probabilities to be computed
 
 # MDR: mosquito development rate (time to move through aquatic stages from egg
 # to adult) as a function of temperature
-mdr_temp_As <- fit_mdr_temp(data.all, species = "An. stephensi")
-mdr_temp_Ag <- fit_mdr_temp(data.all, species = "An. gambiae")
+mdr_temp_As <- fit_mdr_temp(data_villena, species = "An. stephensi")
+mdr_temp_Ag <- fit_mdr_temp(data_villena, species = "An. gambiae")
 
 # EFD: eggs per female per day as a function of temperature
-efd_temp_As <- fit_efd_temp(data.all, species = "An. stephensi")
-efd_temp_Ag <- fit_efd_temp(data.all, species = "An. gambiae")
+efd_temp_As <- fit_efd_temp(data_villena, species = "An. stephensi")
+efd_temp_Ag <- fit_efd_temp(data_villena, species = "An. gambiae")
 
 # DAS: daily probability of survival in the aquatic stages (eggs, larvae, pupae)
-das_temp_As <- fit_das_temp(data.all,
+das_temp_As <- fit_das_temp(data_villena,
                             mdr_temp_As,
                             species = "An. stephensi")
+das_temp_Ag <- fit_das_temp(data_villena,
+                            mdr_temp_As,
+                            species = "An. gambiae")
 
 # PEA: overall probability of surviving from an egg to an adult
 pea_temp_As <- make_pea_temp(das_temp_As, mdr_temp_As)
+pea_temp_Ag <- make_pea_temp(das_temp_Ag, mdr_temp_Ag)
 
 
 # do for both species, and do this in ggplot, also with overlays between species
 
-# visualise these
-par(mfrow = c(3, 2))
+curves <- expand_grid(
+  temperature = seq(0, 60, by = 1),
+  trait_name = c("MDR", "PEA", "EFD"),
+  species = c("An. stephensi", "An. gambiae")
+) %>%
+  mutate(
+    trait = case_when(
+      trait_name == "MDR" & species == "An. stephensi" ~ mdr_temp_As(temperature),
+      trait_name == "MDR" & species == "An. gambiae" ~ mdr_temp_Ag(temperature),
+      trait_name == "PEA" & species == "An. stephensi" ~ pea_temp_As(temperature),
+      trait_name == "PEA" & species == "An. gambiae" ~ pea_temp_Ag(temperature),
+      trait_name == "EFD" & species == "An. stephensi" ~ efd_temp_As(temperature),
+      trait_name == "EFD" & species == "An. gambiae" ~ efd_temp_Ag(temperature),
+    )
+  )
 
-plot(mdr_temp_As,
-     xlim = c(-20, 80),
-     type = "l",
-     xlab = "Temperature (C)",
-     ylab = "MDR",
-     main = "Aquatic development, An. stephensi")
-data.all %>%
-  filter(
-    trait.name == "mdr",
-    specie == "An. stephensi"
+data_villena_plot <- data_villena %>%
+  mutate(
+    trait_name = toupper(trait.name),
+    trait_name = case_when(
+      trait_name == "E2A" ~ "PEA",
+      .default = trait_name
+    ),
+    species = specie,
+    temperature = T
   ) %>%
-  points(trait ~ T, data = .)
-
-plot(mdr_temp_Ag,
-     xlim = c(-20, 80),
-     type = "l",
-     xlab = "Temperature (C)",
-     ylab = "MDR",
-     main = "Aquatic development, An. gambiae")
-data.all %>%
   filter(
-    trait.name == "mdr",
-    specie == "An. gambiae"
-  ) %>%
-  points(trait ~ T, data = .)
+    trait_name %in% curves$trait_name,
+    species %in% curves$species
+  )
 
-plot(pea_temp_As,
-     xlim = c(-20, 80),
-     type = "l",
-     xlab = "Temperature (C)",
-     ylab = "PEA",
-     main = "Aquatic survival, An. stephensi")
-data.all %>%
-  filter(
-    trait.name == "e2a",
-    specie == "An. stephensi"
-  ) %>%
-  points(trait ~ T, data = .)
-
-plot.new()
-
-plot(efd_temp_As,
-     xlim = c(-20, 80),
-     type = "l",
-     xlab = "Temperature (C)",
-     ylab = "EFD",
-     main = "Egg laying, An. stephensi")
-data.all %>%
-  filter(
-    trait.name == "efd",
-    specie == "An. stephensi"
-  ) %>%
-  points(trait ~ T, data = .)
-
-plot(efd_temp_Ag,
-     xlim = c(-20, 80),
-     type = "l",
-     xlab = "Temperature (C)",
-     ylab = "EFD",
-     main = "Egg laying, An. gambiae")
-data.all %>%
-  filter(
-    trait.name == "efd",
-    specie == "An. gambiae"
-  ) %>%
-  points(trait ~ T, data = .)
+ggplot(
+  curves,
+  aes(y = trait,
+      x = temperature)
+) +
+  geom_line() +
+  facet_grid(trait_name ~ species,
+             scales = "free_y") +
+  theme_minimal() +
+  geom_point(
+    data = data_villena_plot,
+    alpha = 0.3
+  )
 
 
-# now add density dependence effect to daily pea (survival from egg to adult)
+# now add density dependence effect to daily aquatic survival (from egg to adult)
 # too - From Evans Figure 1D&F
 library(tidyverse)
 stephensi_survival <- read_csv("data/life_history_params/evans/data/clean/CSVs/survival.csv",
