@@ -68,11 +68,11 @@ wetness_perc <- 100
 # placename <- "Awash, Ethiopia"
 # loc <- c(40.142981, 8.9972474)
 
-# placename <- "Niamey, Niger"
-# loc <- c(2.0840132, 13.5127664)
+placename <- "Niamey, Niger"
+loc <- c(2.0840132, 13.5127664)
 
-placename <- "Bangui, CAR"
-loc <- c(18.561247, 4.365849)
+# placename <- "Bangui, CAR"
+# loc <- c(18.561247, 4.365849)
 
 
 micro <- micro_global(
@@ -309,111 +309,62 @@ model_conditions <- function(loc) {
   
 }
 
-# the temperature suitability model is no good in this context, because dumping
-# 100 mosquitoes per day into the environment makes the EIP effect more dominant
-# than the survival effect. Ie. it doesn't tell us about population persistence.
-# We need actual population dynamics.
+# Build a simple two stage model (aquatic stages and adults), with effects of
+# density dependence (daily aquatic survival; DAS), water temperature (DAS and
+# aquatic development rate; MDR), air temperature (adult survival; DS, and egg
+# laying; EFD), and humidity (DS). Construct as a dynamic matrix.
 
-# Build a simple two stage model (aquatic stages and adults), with aquatic stage
-# density dependence and possibly temperature (aquatic survival), adult
-# temperature and humidity survival (adult survival) larval development (aquatic
-# -> adult rate) as a function of water temperature, and gonotrophic cycle
-# (adult -> aquatic rate) as a function of air temperature. Construct as a
-# dynamic matrix.
+# We have the adult humidity and survival combinations from Bayoh, and we can
+# get the other parameters from a combination of studies used in Villena et al.
+# and Evans et al. See estimate_lifehistory_functions.R
 
-# we have the adult humidity and survival combinations, and we can get the other
-# parameters from a combination of Villena et al.
-# https://doi.org/10.1002/ecy.3685 and Evans et al.
+# reload these as functions from saved objects
+rehydrate_lifehistory_function <- function(path_to_object) {
+  object <- readRDS(path_to_object)
+  do.call(`function`,
+          list(object$arguments,
+               body(object$dummy_function)))
+}
 
-# we'll need to reestimate the curves from the datasets, as the posteriors and
-# parameter estimates are not provided for stephensi *facepalm emoji*
+storage_path <- "data/life_history_params/dehydrated"
+# development rate of aquatic stages as a function of water temperature
+mdr_function <- rehydrate_lifehistory_function(
+  file.path(storage_path, "mdr_temp_As.RDS")
+)
+# daily survival probability of aquatic stages as a function of water
+# temperature and density of aquatic stages
+das_function <- rehydrate_lifehistory_function(
+  file.path(storage_path, "das_temp_dens_As.RDS")
+)
+# daily egg laying as a function of air temperature
+efd_function <- rehydrate_lifehistory_function(
+  file.path(storage_path, "efd_temp_As.RDS")
+)
 
-# for the rate of development from eggs to larvae, we want the mosquito
-# development rate 'MDR' from Villena et al. Villena (and Johnson 2015) don't
-# define MDR, but cite Mordecai 2013 which defines it as 'larval development
-# rate' and refers to Bayoh and Lindsay. Bayoh and lindsay do a number of
-# different things, but it's clear from the data in Villena that they are using
-# the time from egg to adult, so MDR is the inverse of the full duration of the
-# aquatic stage, which is what we want.
+# # probability of an adult surviving two weeks at different humidities
+# surv_100rh <- function(temp) survival(temperature = temp, humidity = rep(100, length(temp))) ^ 14
+# surv_50rh <- function(temp) survival(temperature = temp, humidity = rep(50, length(temp))) ^ 14
+# surv_25rh <- function(temp) survival(temperature = temp, humidity = rep(25, length(temp))) ^ 14
+# 
+# plot(surv_100rh,
+#      xlim = c(-20, 100))
+# plot(surv_50rh,
+#      xlim = c(-20, 100),
+#      lty = 2,
+#      add = TRUE)
+# plot(surv_25rh,
+#      xlim = c(-20, 100),
+#      lty = 3,
+#      add = TRUE)
+# min(survival(temperature = seq(-20, 100, length.out = 100),
+#                  humidity = sample(seq(0, 100, length.out = 100))))
 
-# We need to re-estimate parameters for MDR (larval development, or rate of
-# moving from the larval to adult stages, in days; asymmetric), PEA (proportion
-# of eggs surviving to adulthood; concave down), and EFD (eggs per female per
-# day; concave down). We then use the data from Evans to compute the rate of
-# decline of PEA (on the logit scale) as a function of larval density. These are
-# all computed in "R/refit_villena_lifehistory.R"
-
-mdr_function_data <- readRDS("data/life_history_params/mdr_function_data.RDS")
-pea_function_data <- readRDS("data/life_history_params/pea_function_data.RDS")
-efd_function_data <- readRDS("data/life_history_params/efd_function_data.RDS")
-
-# do the splinefun bit externally
-mdr_raw_fun <- with(mdr_function_data, splinefun(temperature, value))
-efd_raw_fun <- with(efd_function_data, splinefun(temperature, value))
-# pea_temp_raw_fun <- with(pea_function_data, splinefun(temperature, raw_value))
-logit_pea_temp_raw_fun <- with(pea_function_data, splinefun(temperature, qlogis(raw_value)))
-
-mdr_function <- function(temperature) {
-  pmax(0, mdr_raw_fun(temperature))
-}  
-
-efd_function <- function(temperature) {
-  pmax(0, efd_raw_fun(temperature))
-}  
-
-# need to do 2d spline function
-pea_function <- function(temperature, density) {
-  logit_raw_vals <- logit_pea_temp_raw_fun(temperature)
-  plogis(logit_raw_vals + density * pea_function_data$density_coef[1])
-}  
-
-# plot these and check they don't produce negatives
-plot(mdr_function, xlim = c(-20, 100))
-min(mdr_function(seq(-20, 100, by = 0.01)))
-
-plot(efd_function, xlim = c(-20, 100))
-min(efd_function(seq(-20, 100, by = 0.01)))
-
-pea_0d <- function(temp) pea_function(temp, density = 0)
-pea_32d <- function(temp) pea_function(temp, density = 32)
-pea_64d <- function(temp) pea_function(temp, density = 64)
-plot(pea_0d,
-     xlim = c(-20, 100))
-plot(pea_32d,
-     xlim = c(-20, 100),
-     lty = 2,
-     add = TRUE)
-plot(pea_64d,
-     xlim = c(-20, 100),
-     lty = 3,
-     add = TRUE)
-min(pea_function(temperature = seq(-20, 100, length.out = 100),
-                 density = sample(seq(0, 100, length.out = 100))))
-
-# probability of surviving two weeks at different humidities
-surv_100rh <- function(temp) survival(temperature = temp, humidity = rep(100, length(temp))) ^ 14
-surv_50rh <- function(temp) survival(temperature = temp, humidity = rep(50, length(temp))) ^ 14
-surv_25rh <- function(temp) survival(temperature = temp, humidity = rep(25, length(temp))) ^ 14
-
-plot(surv_100rh,
-     xlim = c(-20, 100))
-plot(surv_50rh,
-     xlim = c(-20, 100),
-     lty = 2,
-     add = TRUE)
-plot(surv_25rh,
-     xlim = c(-20, 100),
-     lty = 3,
-     add = TRUE)
-min(survival(temperature = seq(-20, 100, length.out = 100),
-                 humidity = sample(seq(0, 100, length.out = 100))))
-
-# pea_function is a function of temperature and density (larvae per 250ml
+# das_function is a function of temperature and density (larvae per 250ml
 # water), the others are functions of temperature
 
 # given our microclimate data, we can now compute these parameters
 
-# For the larval stages (mdr, pea) we can use water temperature. The
+# For the larval stages (mdr, das) we can use water temperature. The
 # experiements use air temperature, but small volumes of water and high humidity
 # so that they track with the air temperatures, but in our microclimate there
 # will be a buffering effect
@@ -421,8 +372,8 @@ min(survival(temperature = seq(-20, 100, length.out = 100),
 conditions <- model_conditions(loc)
 scaling <- 1/24
 mdr <- mdr_function(conditions$habitat$water_temperature) ^ scaling
-pea <- pea_function(conditions$habitat$water_temperature, density = 0) ^ scaling
-pea64 <- pea_function(conditions$habitat$water_temperature, density = 64) ^ scaling
+das <- das_function(conditions$habitat$water_temperature, density = 0) ^ scaling
+das64 <- das_function(conditions$habitat$water_temperature, density = 64) ^ scaling
 efd <- efd_function(conditions$habitat$air_temperature) ^ scaling
 surv <- survival(temperature = conditions$habitat$air_temperature,
                  humidity = conditions$habitat$humidity) ^ scaling
@@ -436,13 +387,13 @@ plot(surv ~ conditions$day,
      xlim = c(10, 14),
      xlab = "", ylab = "",
      main = "adult survival prob")
-plot(pea ~ conditions$day,
+plot(das ~ conditions$day,
      type = "l",
      xlim = c(10, 14),
-     ylim = range(pea, pea64),
+     ylim = range(das, das64),
      xlab = "", ylab = "",
      main = "aquatic survival prob \n(low and high density)")
-lines(pea64 ~ conditions$day,
+lines(das64 ~ conditions$day,
       lty = 2)
 plot(mdr ~ conditions$day,
      type = "l",
@@ -462,25 +413,25 @@ plot(efd ~ conditions$day,
 
 create_matrix <- function(state, water_temperature, mdr, efd, surv, timestep = 1 / 24) {
   
-  # given the previous state, and temperature, compute daily pea
-  pea <- pea_function(temperature = water_temperature,
+  # given the previous state, and temperature, compute daily das
+  das <- das_function(temperature = water_temperature,
                       density = state[1])
   
   # convert all of these to the required timestep (survivals cumuatlive, rates
   # linear)
-  pea_step <- pea ^ timestep
+  das_step <- das ^ timestep
   surv_step <- surv ^ timestep
   mdr_step <- mdr * timestep
   efd_step <- efd * timestep
   
   # construct the matrix
   #     L                A
-  # L   pea * (1-mdr)    surv * efd
-  # A   pea * mdr        surv
+  # L   das * (1-mdr)    surv * efd
+  # A   das * mdr        surv
   matrix(
     c(
-      pea_step * (1 - mdr_step), # top left
-      pea_step * (mdr_step), # bottom left
+      das_step * (1 - mdr_step), # top left
+      das_step * (mdr_step), # bottom left
       surv_step * efd_step, # top right
       surv_step # bottom right
     ),
@@ -696,11 +647,6 @@ suit %>%
   geom_line() +
   facet_wrap(~location) +
   theme_minimal()
-
-# it seems like population persistence is possible outside the tank in Niamey,
-# Niger, but not inside the water tank. Perhaps the outside water temperature is
-# incorrect because it's actually soil?
-
 
 
 # run this over all pixels to map year-round microclimate (and outside
@@ -1085,7 +1031,7 @@ whittaker_data <- get_rds("https://github.com/goldingn/stephenseasonality/raw/ma
 whittaker_admin1 <- get_rds("https://github.com/goldingn/stephenseasonality/raw/main/data/admin_units/simplified_admin1.rds")
 whittaker_admin2 <- get_rds("https://github.com/goldingn/stephenseasonality/raw/main/data/admin_units/simplified_admin2.rds")
 
-# punjab appears twice here
+# punjab apdasrs twice here
 admin1 <- whittaker_admin1 %>%
   select(
     country = NAME_0,
