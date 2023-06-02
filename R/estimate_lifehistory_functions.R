@@ -1,23 +1,17 @@
-# Refit the models in villeno et al to get and interpolate the posterior
+# Estimate life history functions (life history parameters as a function of
+# environmental conditions) from a variety of sources, including:
+# Villena et al. https://doi.org/10.1002/ecy.3685
+
+# First: refit the models in Villena et al. to get and interpolate the posterior
 # predicted relationship against temperature of key life history parameters.
-# Using the aadapted JAGS code from Villeno et al.
+# This requires adapting the R and JAGS code provided in Villena et al. (the
+# basis of the below code), and defining here a number of functions that code
+# appears to use from an R package that was formerly hosted on github:
+# lorecatta/DENVclimate, which appears to no longer exist anymore, but the
+# source code for which is still available on rdrr.io
 
-# I had to get jags running on my M1 mac, so I did the following:
-# install jags at terminal with: `brew install jags` then install rjags pointing
-# to this jags (modify path to wherever jags is, found with `which jags` at
-# terminal)
-# devtools::install_url("http://sourceforge.net/projects/mcmc-jags/files/rjags/4/rjags_4-4.tar.gz",
-#                       args="--configure-args='--with-jags-include=/opt/homebrew/bin/jags/include/JAGS        
-#                                               --with-jags-lib=/opt/homebrew/bin/jags/lib'")
-
-## First load the necessary R packages and files for the computation and
-## visualization
-library(rjags)
-library(MASS)
-library(tidyverse)
-
-# grab this thing from here: https://rdrr.io/github/lorecatta/DENVclimate/src/R/mcmc_utils_all.R
-# which seems not to exist on GH any more?
+# These functions are defined below, sourced, reformatted, and slightly modified
+# from: https://rdrr.io/github/lorecatta/DENVclimate/src/R/mcmc_utils_all.R
 make.briere.samps <- function(coda.samps,
                               nchains = 2,
                               samp.lims = c(151, 5000),
@@ -173,48 +167,10 @@ temp.sim.quants<-function(sim.data, l.temps, byCol=FALSE,
   return(q)
 }
 
-## Next load data
-data.all <- read.csv("data/life_history_params/oswaldov-Malaria_Temperature-16c9d29/data/traits.csv",
-                     header = TRUE,
-                     row.names = 1)
+# the following code is given by Villena et al. for fitting JAGS models of the
+# diffferent types:
 
-## Select the trait of interest. Here we showed as an example MDR for An. gambiae
-data_mdr <- data.all %>%
-  filter(
-    trait.name == "mdr",
-    specie == "An. stephensi"
-  )
-
-data_pea <- data.all %>%
-  filter(
-    trait.name == "e2a",
-    specie == "An. stephensi",
-    # can't find a study with this name and year that does larval survival, only
-    # adult
-    ref != "Murdock et al. 2016" 
-  )
-
-data_efd <- data.all %>%
-  filter(
-    trait.name == "efd",
-    specie == "An. stephensi"
-  )
-
-# # visualize your data
-# plot(data_mdr$T, data_mdr$trait)
-# plot(data_pea$T, data_pea$trait)
-
-## specify the parameters that control the MCMC
-n.chains <- 5
-n.adapt <- 10000
-n.samps <- 20000
-n.burn <- 10000
-
-
-##Choose the appropiate model for the specific trait 
-
-##Briere model (MDR, PDR, a)
-
+# Briere model (MDR, PDR, a)
 jags_briere.bug <- "model {
 
 for (i in 1:N) {
@@ -233,8 +189,7 @@ tau ~ dgamma(0.0001, 0.0001)
 }"
 
 
-## Concave down quadratic model (PEA, EFD, bc)
-
+# Concave down quadratic model (PEA, EFD, bc)
 jags_quad.bug <- "model {
 
 for (i in 1:N) {
@@ -252,108 +207,274 @@ tau ~ dgamma(0.0001, 0.0001)
 }"
 
 
+# load the required R packages
+library(rjags)
+library(MASS)
+library(tidyverse)
 
-## Use jags.model for the specific model with the appropiate
-## default priors
-mdr_model <- jags.model(textConnection(jags_briere.bug),
-                    data = list(
-                      Y = data_mdr$trait,
-                      T = data_mdr$T,
-                      N = length(data_mdr$T)
-                    ),
-                    n.chains = n.chains,
-                    inits = list(
-                      Tm = 31,
-                      T0 = 5,
-                      c = 0.00007
-                    ),
-                    n.adapt = n.adapt) 
-update(mdr_model, n.samps)
+# Note: I had to get jags running on my M2 mac, so I did the following before
+# loading rjags:
+# Install jags at terminal with: `brew install jags`
+# then install rjags pointing to this jags (modify path to wherever jags is,
+# found with `which jags` at terminal)
+# devtools::install_url("http://sourceforge.net/projects/mcmc-jags/files/rjags/4/rjags_4-4.tar.gz",
+#                       args="--configure-args='--with-jags-include=/opt/homebrew/bin/jags/include/JAGS        
+#                                               --with-jags-lib=/opt/homebrew/bin/jags/lib'")
 
-mdr_model_samps_coda <- coda.samples(mdr_model,
-                            c('c','Tm', 'T0', 'sigma'),
-                            n.samps)
-# ## check for convergence
-# plot(mdr_model_samps_coda, ask = TRUE)
+# load data, provided in the supplemental information to Villena et al.
+data.all <- read.csv("data/life_history_params/oswaldov-Malaria_Temperature-16c9d29/data/traits.csv",
+                     header = TRUE,
+                     row.names = 1)
 
-## This command combines the samples from the n.chains into a format
-## that we can use for further analyses. Use appropiate model for specific traits
-mdr_samps <- make.briere.samps(mdr_model_samps_coda,
-                           nchains = n.chains,
-                           samp.lims = c(1, n.samps))
+# Note, I can't find a study with this name and year that does aquatic stage
+# survival, only adult survival, so I am assuming this is a mistake and removing
+# it (6 observations)
+data.all <- data.all %>%
+  filter(
+    !(trait.name == "e2a" & ref == "Murdock et al. 2016") 
+  )
 
 
-
-# do EFD as convex down
-efd_model <- jags.model(textConnection(jags_quad.bug),
-                        data = list(
-                          Y = data_efd$trait,
-                          T = data_efd$T,
-                          N = length(data_efd$T)
-                        ),
-                        n.chains = n.chains,
-                        inits = list(
-                          Tm = 31,
-                          T0 = 5,
-                          qd = 0.00007
-                        ),
-                        n.adapt = n.adapt) 
-update(efd_model, n.samps)
-
-efd_model_samps_coda <- coda.samples(efd_model,
-                                     c('qd','Tm', 'T0', 'sigma'),
-                                     n.samps)
-# ## check for convergence
-# plot(efd_model_samps_coda, ask = TRUE)
-
-## This command combines the samples from the n.chains into a format
-## that we can use for further analyses. Use appropiate model for specific traits
-efd_samps <- make.quad.samps(efd_model_samps_coda,
-                             nchains = n.chains,
-                             samp.lims = c(1, n.samps))
-
-## Next we want to use the parameter samples to get posterior samples
-## of the temperature rsponses themselves
-Temps <- seq(-20, 80, by = 0.1)
-mdr_out <- make.sims.temp.resp(sim = "briere",
-                               mdr_samps,
-                               Temps,
-                               thinned = seq(1, n.samps, length = 1000)) ## Example for MDR
-efd_out <- make.sims.temp.resp(sim = "quad",
-                               efd_samps,
-                               Temps,
-                               thinned = seq(1, n.samps, length = 1000)) ## Example for MDR
-
-mdr_post_mean <- rowMeans(mdr_out$fits)
-efd_post_mean <- rowMeans(efd_out$fits)
-
-# spline these functions
-mdr_function_raw <- splinefun(Temps, mdr_post_mean)
-mdr_function <- function(temperature) {
-  pmax(0, mdr_function_raw(temperature))
+define_jags_model <- function(data,
+                              model_text,
+                              mcmc_params,
+                              inits) {
+  jags.model(textConnection(model_text),
+             data = list(
+               Y = data$trait,
+               T = data$T,
+               N = length(data$T)
+             ),
+             n.chains = mcmc_params$n_chains,
+             inits = inits,
+             n.adapt = mcmc_params$n_adapt) 
+  
 }
 
-efd_function_raw <- splinefun(Temps, efd_post_mean)
-efd_function <- function(temperature) {
-  pmax(0, efd_function_raw(temperature))
+# make a positive-constrained function from MCMC samples, for the required model
+# type
+make_function <- function(coda_samples,
+                          mcmc_params,
+                          model_type = c("briere", "quad"),
+                          temps_out = seq(-20, 80, by = 0.1)) {
+  
+  model_type <- match.arg(model_type)
+  
+  sample_function <- switch(model_type,
+                            briere = make.briere.samps,
+                            quad = make.quad.samps)
+  
+  # This command combines the samples from the chains into a format that we can
+  # use for further analyses. Use appropriate model for specific traits
+  samps <- sample_function(coda_samples,
+                           nchains = mcmc_params$n_chains,
+                           samp.lims = c(1, mcmc_params$n_samps))
+  
+  # use the parameter samples to get posterior samples of the temperature
+  # response curve, and compute the posterior mean curve
+  out <- make.sims.temp.resp(sim = model_type,
+                             samps,
+                             temps_out,
+                             thinned = seq(1,
+                                           mcmc_params$n_samps,
+                                           length = 1000))
+  
+  post_mean <- rowMeans(out$fits)
+  
+  # spline through this and return (constraining to be positive)
+  function_raw <- splinefun(temps_out, post_mean)
+  function_positive <- function(temperature) {
+    pmax(0, function_raw(temperature))
+  }
+  
+  function_positive
+  
 }
 
-plot(mdr_function, xlim = c(-20, 80), type = "l")
-points(data_mdr$T, data_mdr$trait)
-min(mdr_function(Temps))
+# Use the Villena et al JAGS code to estimate the relationship between
+# temperature and aquatic development rate for the required species
+fit_mdr_temp <- function(data,
+                         species = c("An. stephensi", "An. gambiae"),
+                         # specify the parameters that control the MCMC
+                         mcmc_params = list(
+                           n_chains = 5,
+                           n_adapt = 10000,
+                           n_samps = 20000,
+                           n_burn = 10000
+                         ),
+                         plot_draws = TRUE
+) {
+  species <- match.arg(species)
+  
+  data_sub <- data %>%
+    filter(
+      trait.name == "mdr",
+      specie == species
+    )
+  
+  # Use the corresponding JAGS model for each trait
+  model <- define_jags_model(data_sub,
+                             jags_briere.bug,
+                             mcmc_params,
+                             inits = list(
+                               Tm = 31,
+                               T0 = 5,
+                               c = 0.00007
+                             ))
+  
+  update(model, mcmc_params$n_samps)
+  model_samps_coda <- coda.samples(model,
+                                   c("c", "Tm", "T0", "sigma"),
+                                   mcmc_params$n_samps)
+  if (plot_draws) {
+    # visual check for convergence
+    plot(model_samps_coda, ask = TRUE) 
+  }
+  
+  make_function(model_samps_coda,
+                mcmc_params,
+                model_type = "briere")
+  
+}
 
-plot(efd_function, xlim = c(-20, 80), type = "l", ylim = range(data_efd$trait))
-points(data_efd$T, data_efd$trait)
-min(efd_function(Temps))
+# Use the Villena et al JAGS code to estimate the relationship between
+# temperature and eggs per female per day for the required species
+
+# note that we modell the EFD curve as a down quadratic, as described in the
+# paper and SI, but the one plotted in the MS is clearly a Gaussian. I also had
+# to remove the observation truncation in the model definition, since a bunch of
+# 0s were observed and these were being thrown out, and also to flip the sign on
+# the 'quad.2' function above to match the downward quadratic
+fit_efd_temp <- function(data,
+                         species = c("An. stephensi", "An. gambiae"),
+                         # specify the parameters that control the MCMC
+                         mcmc_params = list(
+                           n_chains = 5,
+                           n_adapt = 10000,
+                           n_samps = 20000,
+                           n_burn = 10000
+                         ),
+                         plot_draws = TRUE
+) {
+  species <- match.arg(species)
+  
+  data_sub <- data %>%
+    filter(
+      trait.name == "efd",
+      specie == species
+    )
+
+  # do EFD as convex down
+  model <- define_jags_model(data_sub,
+                             jags_quad.bug,
+                             mcmc_params,
+                             inits = list(
+                               Tm = 31,
+                               T0 = 5,
+                               qd = 0.00007
+                             ))
+  
+  update(model, mcmc_params$n_samps)
+  model_samps_coda <- coda.samples(model,
+                                   c("qd", "Tm", "T0", "sigma"),
+                                   mcmc_params$n_samps)
+  if (plot_draws) {
+    # visual check for convergence
+    plot(model_samps_coda, ask = TRUE) 
+  }
+  
+  make_function(model_samps_coda,
+                mcmc_params,
+                model_type = "quad")
+  
+}
+
+# use Villena et al. code to fit functions for MDR, PEA, EFD, against
+# temperature for An. stephensi
+
+# MDR: mosquito development rate (time to move through aquatic stages from egg
+# to adult) for An. stephensi as a function of temperature
+mdr_temp_As <- fit_mdr_temp(data.all, species = "An. stephensi")
+
+# EFD: eggs per female per day for An. stephensi as a function of temperature
+efd_temp_As <- fit_efd_temp(data.all, species = "An. stephensi")
+
+# MDR: mosquito development rate (time to move through aquatic stages from egg
+# to adult) for An. stephensi as a function of temperature
+mdr_temp_Ag <- fit_mdr_temp(data.all, species = "An. gambiae")
+
+# EFD: eggs per female per day for An. stephensi as a function of temperature
+efd_temp_Ag <- fit_efd_temp(data.all, species = "An. gambiae")
 
 
 
-# note that the fitted EFD curve is a down quadratic, as described in the paper
-# and SI, but the one plotted in the MS is clearly a Gaussian. I also had to
-# remove the observation truncation, since a bunch of 0s were observed and these
-# were being thrown out, and flip the sign on the 'quad.2' function bove to
-# match the downward quadratic
+# do for both species, and do this in ggplot, also with overlays between species
 
+# visualise these
+par(mfrow = c(2, 2))
+
+plot(mdr_temp_As,
+     xlim = c(-20, 80),
+     type = "l",
+     xlab = "Temperature (C)",
+     ylab = "MDR",
+     main = "Aquatic development, An. stephensi")
+data.all %>%
+  filter(
+    trait.name == "mdr",
+    specie == "An. stephensi"
+  ) %>%
+  points(trait ~ T, data = .)
+
+plot(efd_temp_As,
+     xlim = c(-20, 80),
+     type = "l",
+     xlab = "Temperature (C)",
+     ylab = "EFD",
+     main = "Egg laying, An. stephensi")
+data.all %>%
+  filter(
+    trait.name == "efd",
+    specie == "An. stephensi"
+  ) %>%
+  points(trait ~ T, data = .)
+
+plot(mdr_temp_Ag,
+     xlim = c(-20, 80),
+     type = "l",
+     xlab = "Temperature (C)",
+     ylab = "MDR",
+     main = "Aquatic development, An. gambiae")
+data.all %>%
+  filter(
+    trait.name == "mdr",
+    specie == "An. gambiae"
+  ) %>%
+  points(trait ~ T, data = .)
+
+plot(efd_temp_Ag,
+     xlim = c(-20, 80),
+     type = "l",
+     xlab = "Temperature (C)",
+     ylab = "EFD",
+     main = "Egg laying, An. gambiae")
+data.all %>%
+  filter(
+    trait.name == "efd",
+    specie == "An. gambiae"
+  ) %>%
+  points(trait ~ T, data = .)
+
+
+
+
+
+# PEA: probability of surviving from egg to adult as a function of temperature
+data_pea <- data.all %>%
+  filter(
+    trait.name == "e2a",
+    specie == "An. stephensi"
+  )
 
 # refit the PEA data as a daily rate, using a cox proportional hazards model,
 # with the exposure time given by the expected time to emergence from the MDR
