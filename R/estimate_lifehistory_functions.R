@@ -434,12 +434,146 @@ make_pea_temp <- function(das_temp, mdr_temp) {
   }
 }
 
+# density dependence effects on daily aquatic survival (from egg to
+# adult) for An stephensi from Evans figure 1 panels D&F
+# https://doi.org/10.1002/eap.2334
+load_stephensi_survival_data <- function(){
+  
+  read_csv("data/life_history_params/evans/data/clean/CSVs/survival.csv",
+           show_col_types = FALSE) %>%
+    filter(
+      Species == "Stephensi",
+      AeDens == 0
+    ) %>%
+    mutate(
+      NumInitial = StDens / 2
+    ) %>%
+    select(
+      sex = Sex,
+      temperature = Temp,
+      density = StDens,
+      replicate = Replicate,
+      initial = NumInitial,
+      survived = NumSurvived
+    ) %>%
+    mutate(
+      # add a random ID for the experimental trial (M and F in together, but
+      # multiple replicates per trial)
+      trial = paste(temperature, density, replicate, sep = "_"),
+      trial_id = as.numeric(factor(trial)),
+      # remove the intercept term, and just add a parameter for the males
+      is_male = as.numeric(sex == "Male")
+    )
+  
+}
+
+# load data on temperatire-dependence of life history traits, provided in the
+# supplemental information to Villena et al., and clean andaugment it
+load_villena_data <- function() {
+  
+  read.csv("data/life_history_params/oswaldov-Malaria_Temperature-16c9d29/data/traits.csv",
+           header = TRUE,
+           row.names = 1) %>%
+    # I can't find a study with this name and year that does aquatic stage
+    # survival, only adult survival, so I am assuming this is a mistake and removing
+    # it (6 observations)
+    filter(
+      !(trait.name == "e2a" & ref == "Murdock et al. 2016") 
+    ) %>%
+    # Ditto this study, there is a 2004 study by these authors which does adult
+    # survival (3 observations) https://doi.org/10.1079/ber2004316
+    filter(
+      !(trait.name == "e2a" & ref == "Kirby and Lindsay 2009") 
+    ) %>%
+    # add on the initial number of eggs in the aquatic survival experiements (from
+    # going back to the literature)
+    mutate(
+      initial = case_when(
+        # https://doi.org/10.1111/gcb.12240
+        ref == "Paaijmans et al. 2013" & trait.name == "e2a" ~ 50,
+        # https://doi.org/10.1079/BER2003259
+        ref == "Bayoh and Lindsay 2003" & trait.name == "e2a" ~ 30, 
+        # J VBDs, no doi, initial number not given:
+        # https://www.mrcindia.org/journal/issues/464295.pdf
+        ref == "Olayemi and Ande 2009" & trait.name == "e2a" ~ NA,
+        .default = NA
+      )
+    )
+  
+}
+
+# given a survival temperature function and a density dependence log hazard
+# coeficient, return a survival function of temperature and density
+make_surv_temp_dens_function <- function(surv_temp_function, dd_effect) {
+  function(temperature, density) {
+    # get daily *mortality probability* at zero/low density at this temperature
+    daily_mortality_zero_density <- 1 - surv_temp_function(temperature)
+    # convert to the log hazard for a single day
+    loghaz_mortality_zero_density <- log(-log(1 - daily_mortality_zero_density))
+    # add on the density effect
+    loghaz_mortality <- loghaz_mortality_zero_density + dd_effect * density
+    # convert back to a daily *mortality probability*, including the density effect
+    daily_mortality <- 1 - exp(-exp(loghaz_mortality))
+    # and return as daily survival
+    1 - daily_mortality
+  }
+}
+
+dehydrate_lifehistory_function <- function(fun, path_to_object) {
+  
+  arguments <- formals(fun)
+  e <- environment(fun)
+  
+  # determine how to store the required components
+  if (identical(names(arguments), "temperature")) {
+    object <- list(
+      arguments = arguments,
+      temperature_function_raw = e$function_raw,
+      rectifier = function(x) {pmax(0, x)},
+      dummy_function = function() {
+        object$rectifier(
+          object$temperature_function_raw(
+            temperature
+          )
+        )
+      }
+    )
+  } else if (identical(names(arguments), c("temperature", "density"))) {
+    object <- list(
+      arguments = arguments,
+      temperature_function_raw = e$surv_temp_function,
+      dd_effect = e$dd_effect,
+      dummy_function = function() {
+        daily_mortality_zero_density <- 1 - object$temperature_function_raw(temperature)
+        loghaz_mortality_zero_density <- log(-log(1 - daily_mortality_zero_density))
+        loghaz_mortality <- loghaz_mortality_zero_density + object$dd_effect * density
+        daily_mortality <- 1 - exp(-exp(loghaz_mortality))
+        1 - daily_mortality
+      }
+    )
+  } else {
+    stop("cannot dehydrate this function")
+  }
+  
+  saveRDS(object, path_to_object)
+  
+}
+
 
 # load the required R packages
+
+# for modelling
 library(rjags)
-library(MASS)
-library(tidyverse)
 library(mgcv)
+library(lme4)
+library(MASS)
+
+# for data handling and plotting
+library(tidyverse)
+
+# for contour labelling
+library(metR)
+
 
 # Note: I had to get jags running on my M2 mac, so I did the following before
 # loading rjags:
@@ -451,37 +585,10 @@ library(mgcv)
 #                                               --with-jags-lib=/opt/homebrew/bin/jags/lib'")
 
 # load data, provided in the supplemental information to Villena et al., and clean/augment it
-data_villena <- read.csv("data/life_history_params/oswaldov-Malaria_Temperature-16c9d29/data/traits.csv",
-                     header = TRUE,
-                     row.names = 1) %>%
-  # Note, I can't find a study with this name and year that does aquatic stage
-  # survival, only adult survival, so I am assuming this is a mistake and removing
-  # it (6 observations)
-  filter(
-    !(trait.name == "e2a" & ref == "Murdock et al. 2016") 
-  ) %>%
-  # Ditto this study, there is a 2004 study by these authors which does adult
-  # survival (3 observations) https://doi.org/10.1079/ber2004316
-  filter(
-    !(trait.name == "e2a" & ref == "Kirby and Lindsay 2009") 
-  ) %>%
-  # add on the initial number of eggs in the aquatic survival experiements (from
-  # going back to the literature)
-  mutate(
-    initial = case_when(
-      # https://doi.org/10.1111/gcb.12240
-      ref == "Paaijmans et al. 2013" & trait.name == "e2a" ~ 50,
-      # https://doi.org/10.1079/BER2003259
-      ref == "Bayoh and Lindsay 2003" & trait.name == "e2a" ~ 30, 
-      # J VBDs, no doi, initial number not given:
-      # https://www.mrcindia.org/journal/issues/464295.pdf
-      ref == "Olayemi and Ande 2009" & trait.name == "e2a" ~ NA,
-      .default = NA
-    )
-  )
+data_villena <- load_villena_data()
 
 # use Villena et al. code to fit functions for MDR and EFD, against temperature
-# for An. stephensi, and refit PEA ina. way that enables daily survival
+# for An. stephensi, and refit PEA in a way that enables daily survival
 # probabilities to be computed
 
 # MDR: mosquito development rate (time to move through aquatic stages from egg
@@ -495,19 +602,18 @@ efd_temp_Ag <- fit_efd_temp(data_villena, species = "An. gambiae")
 
 # DAS: daily probability of survival in the aquatic stages (eggs, larvae, pupae)
 das_temp_As <- fit_das_temp(data_villena,
-                            mdr_temp_As,
+                            mdr_temp_fun = mdr_temp_As,
                             species = "An. stephensi")
 das_temp_Ag <- fit_das_temp(data_villena,
-                            mdr_temp_As,
+                            mdr_temp_fun = mdr_temp_As,
                             species = "An. gambiae")
 
-# PEA: overall probability of surviving from an egg to an adult
+# PEA: overall probability of surviving from an egg to an adult (used only for
+# plotting)
 pea_temp_As <- make_pea_temp(das_temp_As, mdr_temp_As)
 pea_temp_Ag <- make_pea_temp(das_temp_Ag, mdr_temp_Ag)
 
-
-# do for both species, and do this in ggplot, also with overlays between species
-
+# plot fitted curves and data
 curves <- expand_grid(
   temperature = seq(0, 60, by = 1),
   trait_name = c("MDR", "PEA", "EFD"),
@@ -521,6 +627,11 @@ curves <- expand_grid(
       trait_name == "PEA" & species == "An. gambiae" ~ pea_temp_Ag(temperature),
       trait_name == "EFD" & species == "An. stephensi" ~ efd_temp_As(temperature),
       trait_name == "EFD" & species == "An. gambiae" ~ efd_temp_Ag(temperature),
+    ),
+    trait_name = case_when(
+      trait_name == "MDR" ~ "Aquatic development",
+      trait_name == "PEA" ~ "Aquatic survival",
+      trait_name == "EFD" ~ "Adult eggs/day"
     )
   )
 
@@ -532,12 +643,17 @@ data_villena_plot <- data_villena %>%
       .default = trait_name
     ),
     species = specie,
-    temperature = T
+    temperature = T,
+    trait_name = case_when(
+      trait_name == "MDR" ~ "Aquatic development",
+      trait_name == "PEA" ~ "Aquatic survival",
+      trait_name == "EFD" ~ "Adult eggs/day"
+    )
   ) %>%
   filter(
     trait_name %in% curves$trait_name,
     species %in% curves$species
-  )
+  ) 
 
 ggplot(
   curves,
@@ -546,54 +662,94 @@ ggplot(
 ) +
   geom_line() +
   facet_grid(trait_name ~ species,
-             scales = "free_y") +
-  theme_minimal() +
+             scales = "free_y",
+             switch = "y") +
   geom_point(
     data = data_villena_plot,
     alpha = 0.3
+  ) +
+  theme_minimal() +
+  theme(strip.placement = "outside") +
+  xlab("Temperature (C)") +
+  ylab("")
+
+ggsave("figures/lifehistory_temperature.png",
+       bg = "white",
+       width = 5,
+       height = 5)
+
+ggplot(
+  filter(curves,
+         species == "An. stephensi"),
+  aes(y = trait,
+      x = temperature)
+) +
+  geom_line() +
+  facet_grid(trait_name ~ species,
+             scales = "free_y",
+             switch = "y") +
+  geom_point(
+    data = filter(data_villena_plot,
+                  species == "An. stephensi"),
+    alpha = 0.3
+  ) +
+  theme_minimal() +
+  theme(strip.placement = "outside") +
+  xlab("Temperature (C)") +
+  ylab("")
+
+ggsave("figures/lifehistory_temperature_stephensi.png",
+       bg = "white",
+       width = 3,
+       height = 5)
+
+ggplot(
+  filter(curves,
+         species == "An. gambiae"),
+  aes(y = trait,
+      x = temperature)
+) +
+  geom_line() +
+  facet_grid(trait_name ~ species,
+             scales = "free_y",
+             switch = "y") +
+  geom_point(
+    data = filter(data_villena_plot,
+                  species == "An. gambiae"),
+    alpha = 0.3
+  ) +
+  theme_minimal() +
+  theme(strip.placement = "outside") +
+  xlab("Temperature (C)") +
+  ylab("")
+
+ggsave("figures/lifehistory_temperature_gambiae.png",
+       bg = "white",
+       width = 3,
+       height = 5)
+
+# now add density dependence effect to daily aquatic survival (from egg to
+# adult) too for An stephensi
+
+# load density and temperature treatment survival data from Evans figure 1
+# panels D&F and use it to compute a density coefficent on the log hazard scale
+# for the probability of survival. Note that Evans don't give the data in
+# survival curve form and don't specify the durations of the experiments so we
+# again use the modelled MDR as the expoure period and a Cox PH model to model
+# that. Note that this assumes density does not affect development rate, but any
+# impact of that on fraction reaching adulthood will be accounted for in the
+# survival effect. Evan et al.: https://doi.org/10.1002/eap.2334
+stephensi_survival <- load_stephensi_survival_data() %>%
+  mutate(
+    died = initial - survived,
+    exposure_period = 1 / mdr_temp_As(temperature = temperature),
+    exposure_offset = log(exposure_period),
+    mortality_zero_density = 1 - das_temp_As(temperature),
+    cloglog_mortality_zero_density = log(-log(1 - mortality_zero_density))
   )
 
-
-# now add density dependence effect to daily aquatic survival (from egg to adult)
-# too - From Evans Figure 1D&F
-library(tidyverse)
-stephensi_survival <- read_csv("data/life_history_params/evans/data/clean/CSVs/survival.csv",
-                               show_col_types = FALSE) %>%
-  filter(
-    Species == "Stephensi",
-    AeDens == 0
-  ) %>%
-  mutate(
-    NumInitial = StDens / 2
-  ) %>%
-  select(
-    sex = Sex,
-    temperature = Temp,
-    density = StDens,
-    replicate = Replicate,
-    initial = NumInitial,
-    survived = NumSurvived
-  ) %>%
-  mutate(
-    # add a random ID for the experimental trial (M and F in together, but
-    # multiple replicates per trial)
-    trial = paste(temperature, density, replicate, sep = "_"),
-    trial_id = as.numeric(factor(trial)),
-    # add in the logit survival probability (from egg to adult) at no density as
-    # a covariate for the temperature effect
-    logit_survival_zero_density = qlogis(das_temp_As(temperature)),
-    # remove the intercept term, and just add a parameter for the males
-    is_male = as.numeric(sex == "Male")
-  )
-
-# model this
-library(lme4)
-stephensi_dd_model <- glmer(
-  cbind(survived, initial - survived) ~ -1 +
-    # no intercept, but a scaling factor on the Villena survival prob to get the
-    # 0-density curve in terms of the survival prob used here (cumulative over
-    # an undisclosed period)
-    logit_survival_zero_density +
+mortality_model <- lme4::glmer(
+  cbind(died, survived) ~ 1 +
     # dummy for sex differences
     is_male +
     # logit-linear effect of density
@@ -601,76 +757,105 @@ stephensi_dd_model <- glmer(
     # random effect for the trial id (unique per replicate/condition
     # interaction)
     (1|trial_id),
-  family = binomial,
+  family = stats::binomial("cloglog"),
+  offset = exposure_offset + cloglog_mortality_zero_density,
   data = stephensi_survival
 )
 
-summary(stephensi_dd_model)
+# residuals look fine (not surprising, given all the random effects)
+plot(mortality_model)
 
-# residuals look fine (not surprising, given random effects)
-plot(stephensi_dd_model)
-
+# this is the density effect on *mortality* in the COX PH model
 # female is the default, and we don't care about the scaling on the survival
 # probability (the daily egg to adult survival prob from Villena is more
 # useful), so just scale that by the density term on the logit scale
-density_effect <- fixef(stephensi_dd_model)[["density"]]
+dd_effect_As <- fixef(mortality_model)[["density"]]
 
-# create final function
-das_temp_dens_As <- function(temperature, density) {
-  temp_effect <- das_temp_As(temperature)
-  plogis(qlogis(temp_effect) + density_effect * density)
+# Note that we could roll all of this into the GAM temperature survival model,
+# but that would be hard to model with multiple datasts and noise terms, and
+# would require a 2D spline which would be more computationally costly to
+# predict from when simulating the model
+
+# create the final function
+das_temp_dens_As <- make_surv_temp_dens_function(
+  surv_temp_function = das_temp_As,
+  dd_effect = dd_effect_As
+)
+
+# plot the survival model
+density_plotting <- expand_grid(
+  temperature = seq(10, 40, length.out = 100),
+  density = seq(0, 210, length.out = 100)  
+) %>%
+  rowwise() %>%
+  mutate(
+    prob = das_temp_dens_As(temperature, density)
+  )
+
+max_grey <- 0.6
+cols <- grey(1 - max_grey * seq(0, 1, by = 0.1))
+cols[1] <- "transparent"
+
+ggplot(density_plotting,
+       aes(y = density,
+           x = temperature,
+           z = prob)) +
+  geom_contour_filled(
+    binwidth = 0.1
+  ) +
+  geom_contour(
+    binwidth = 0.1,
+    colour = grey(0.2),
+    linewidth = 0.5
+  ) +
+  geom_text_contour(
+    binwidth = 0.1,
+    nudge_y = -5,
+    # rotate = FALSE,
+    skip = 0
+    # label.placer = label_placer_n(3)
+  ) +
+  scale_fill_discrete(type = cols) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  ggtitle("Daily survival probability of aquatic stages") +
+  ylab("Individuals per 250ml") +
+  xlab("Temperature (C)")
+
+ggsave("figures/aquatic_survival_stephensi.png",
+       bg = "white",
+       width = 5,
+       height = 5)
+
+
+# now we need to save these neatly to be loaded reused later, getting around all
+# the awkward lexical scoping stuff. Use dehydrate_lifehistory_function() and
+# rehydrate_lifehistory_function() to store and rejuvenate the functions as RDS
+# files, with all relevant objects included
+
+storage_path <- "data/life_history_params/dehydrated"
+
+# MDR, EFD, DAS, PEA ~ temp
+dehydrate_lifehistory_function(mdr_temp_As, file.path(storage_path, "mdr_temp_As.RDS"))
+dehydrate_lifehistory_function(mdr_temp_Ag, file.path(storage_path, "mdr_temp_Ag.RDS"))
+dehydrate_lifehistory_function(efd_temp_As, file.path(storage_path, "efd_temp_As.RDS"))
+dehydrate_lifehistory_function(efd_temp_Ag, file.path(storage_path, "efd_temp_Ag.RDS"))
+dehydrate_lifehistory_function(das_temp_As, file.path(storage_path, "das_temp_As.RDS"))
+dehydrate_lifehistory_function(das_temp_Ag, file.path(storage_path, "das_temp_Ag.RDS"))
+dehydrate_lifehistory_function(pea_temp_As, file.path(storage_path, "pea_temp_As.RDS"))
+dehydrate_lifehistory_function(pea_temp_Ag, file.path(storage_path, "pea_temp_Ag.RDS"))
+
+# DAS ~ temp + density
+dehydrate_lifehistory_function(das_temp_dens_As, file.path(storage_path, "das_temp_dens_As.RDS"))
+
+# use the following function to rehydrate them, e.g.:
+#   storage_path <- "data/life_history_params/dehydrated"
+#   das_temp_dens_As <- rehydrate_lifehistory_function(file.path(storage_path, "das_temp_dens_As.RDS"))
+
+rehydrate_lifehistory_function <- function(path_to_object) {
+  object <- readRDS(path_to_object)
+  do.call(`function`,
+          list(object$arguments,
+               body(object$dummy_function)))
 }
 
-# plot the model
-survival_summary <- stephensi_survival %>%
-  filter(
-    sex == "Female"
-  ) %>%
-  group_by(temperature, density) %>%
-  summarise(
-    across(c(initial, survived), sum),
-    .groups = "drop"
-  ) %>%
-  mutate(
-    prob = survived / initial
-  ) %>%
-  select(-initial, -survived)
-
-temp <- seq(10, 40, length.out = 100)
-dens <- seq(0, 128, length.out = 100)
-all <- expand_grid(dens, temp)
-resp <- apply(all, 1, function(x) das_temp_dens_As(temperature = x["temp"],
-                                               density = x["dens"]))
-dim(resp) <- c(length(temp), length(dens))
-contour(x = temp,
-        y = dens,
-        z = resp,
-        levels = c(0.01, seq(0.1, 0.9, length.out = 9)),
-        xlab = "Temperature (celsius)",
-        ylab = "Density (larvae per 250ml)",
-        main = "Daily probability of survival (egg to emergence)\nas a function of temperature and larval density")
-
-points(density ~ temperature,
-       data = survival_summary,
-       pch = 21,
-       bg = grey(1 - prob),
-       col = grey(0.4))
-
-
-# save the data for all of these functions for later use in modelling
-mdr_function_data <- data.frame(temperature = Temps,
-                                value = mdr_function(Temps))
-
-efd_function_data <- data.frame(temperature = Temps,
-                                value = efd_function(Temps))
-
-das_function_data <- data.frame(temperature = Temps,
-                                raw_value = das_temp_As(Temps),
-                                density_coef = density_effect)
-
-# can't save the functions as the environments get lost, so save the data and
-# reconstitute the functions later
-
-saveRDS(mdr_function_data, file = "data/life_history_params/mdr_function_data.RDS")
-saveRDS(das_function_data, file = "data/life_history_params/das_function_data.RDS")
-saveRDS(efd_function_data, file = "data/life_history_params/efd_function_data.RDS")
