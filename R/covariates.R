@@ -753,14 +753,80 @@ covs_continuous <- writereadrast(
   "output/rasters/covariates/covs_continuous.grd"
 )
 
+covs_continuous <- rast("output/rasters/covariates/covs_continuous.grd")
+
 gc()
 
 
 prcdat <- as.matrix(covs_continuous)
-#prcdat <- prcdat[!is.na(prcdat[,1]),]
+prcdat <- prcdat[!is.na(prcdat[,1]),]
 
 #prcdat <- covs_continuous[]
 
 gc()
 
-prccovs <- prcomp(prcdat, scale. = TRUE)
+apply(prcdat, 2, function(x){sum(is.na(x))})
+
+samples <- sample(
+  x = 1:dim(prcdat)[1],
+  size = 1e5,
+  replace = FALSE
+)
+
+prccovs <- prcomp(prcdat[samples,], scale. = TRUE)
+
+prccovs
+summary(prcovs)
+# this essenially shows that pc2 is accessibilty, pc3 is nighttime lights, pc4 is population
+
+
+prbuilt <- prcomp(prcdat[samples, 2:4], scale. = TRUE)
+
+prbuilt
+summary(prbuilt)
+# 96% coverage by one component. 
+# suggest using just built_volume instead of a pc of the three, as volume includes height and surface
+
+pairs(
+  prcdat[samples, 2:4]
+)
+
+covs <- c(
+  accessibility,
+  #built_height,
+  #built_surface,
+  built_volume,
+  smod,
+  landcover$landcover_2020,
+  nighttimelights$nighttimelights_2020,
+  pop$pop_2020
+)
+
+covs <- writereadrast(
+  covs,
+  "output/rasters/covariates/covs.grd"
+)
+
+
+# 
+
+covmask <- rast("output/rasters/covariates/covmask.grd")
+covs <- rast("output/rasters/covariates/covs.grd")
+covs_continuous <- rast("output/rasters/covariates/covs_continuous.grd")
+
+accessibility <- rast("output/rasters/covariates/accessibility.grd")
+#evi <- rast("output/rasters/covariates/")
+#ghs_built
+#ghs_smod
+built_height <- rast("output/rasters/covariates/built_height.grd")
+built_surface <- rast("output/rasters/covariates/built_surface.grd")
+built_volume <- rast("output/rasters/covariates/built_volume.gri")
+smod <- rast("output/rasters/covariates/smod.grd")
+landcover <- rast("output/rasters/covariates/landcover.grd")
+lst_day <- rast("output/rasters/covariates/lst_day.grd")
+lst_night <- rast("output/rasters/covariates/lst_night.grd")
+nighttimelights <- rast("output/rasters/covariates/nighttimelights.grd")
+rainfall <- rast("output/rasters/covariates/rainfall.grd")
+tcb <- rast("output/rasters/covariates/tcb.grd")
+tcw <- rast("output/rasters/covariates/tcw.grd")
+pop <- rast("output/rasters/covariates/pop.grd")
