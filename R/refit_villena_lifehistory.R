@@ -10,11 +10,18 @@
 #                       args="--configure-args='--with-jags-include=/opt/homebrew/bin/jags/include/JAGS        
 #                                               --with-jags-lib=/opt/homebrew/bin/jags/lib'")
 
+devtools::install_url("http://sourceforge.net/projects/mcmc-jags/files/rjags/4/rjags_4-4.tar.gz",
+                      args="--configure-args='--with-jags-include=/homebrew/bin/jags/include/JAGS
+                                              --with-jags-lib=/homebrew/bin/jags/lib'")
+
 ## First load the necessary R packages and files for the computation and
 ## visualization
 library(rjags)
 library(MASS)
-library(tidyverse)
+#library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(readr)
 
 # grab this thing from here: https://rdrr.io/github/lorecatta/DENVclimate/src/R/mcmc_utils_all.R
 # which seems not to exist on GH any more?
