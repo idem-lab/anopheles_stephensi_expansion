@@ -26,9 +26,12 @@ vignettes/*.pdf
 *.knit.md
 # R Environment Variables
 .Renviron
+.Rprofile
+
+# other
 *.html
 /data
 *.DS_Store
-.Rprofile
 output
 homebrew
+*.zip
