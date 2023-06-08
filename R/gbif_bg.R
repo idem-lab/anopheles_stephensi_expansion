@@ -2,10 +2,9 @@ library(dplyr)
 library(rgbif)
 library(readr)
 
-# bounding box area for coords
+# based on bounding box code, which borrows from the nichemapR code,
 
-# crop down to EMRO and AFRO regions
-
+# africa countries with A stephensi older records
 africa_countries <- function () {
   c(
     # "AGO",
@@ -25,7 +24,7 @@ africa_countries <- function () {
     # "EGY",
     # "ERI",
     # "ESH",
-    "ETH"#,
+    "ETH",
     # "GAB",
     # "GHA",
     # "GIN",
@@ -51,7 +50,7 @@ africa_countries <- function () {
     # "SEN",
     # "SLE",
     # "SOM",
-    # "SSD",
+    "SSD"#,
     # "STP",
     # "SWZ",
     # "TCD",
@@ -141,12 +140,14 @@ bg_countries <- function() {
   setdiff(countries(), countries_exclude())
 }
 
-
+# switch to 2-character codes for gbif
 bg_countries_2 <- countrycode::countrycode(
   bg_countries(),
   origin = "iso3c",
   destination = "iso2c"
 )
+
+
 
 gbif_data  <- occ_download(
   pred('taxonKey', 1),
@@ -163,7 +164,7 @@ gbif_data  <- occ_download(
 
 gbif_data
 
-gbif_bg_raw <- occ_download_get("0009945-230530130749713") %>%
+gbif_bg_raw <- occ_download_get("0013949-230530130749713") %>%
   occ_download_import() %>% 
   write_csv(
     sprintf(
