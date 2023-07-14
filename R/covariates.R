@@ -69,6 +69,7 @@ covmask <- mask(pop$pop_2020, built_height)
 names(covmask) <- "mask"
 covmask[!is.na(covmask)] <- 0
 
+
 covmask <- writereadrast(
   covmask,
   "output/rasters/covariates/covmask.grd"
@@ -280,6 +281,72 @@ built_volume <- writereadrast(
 built_volume
 
 # plot(built_volume)
+
+# GHS_BUILT_C
+# Grids which dilineate the boundaries of human settlements
+# and describe their inner characteristics in terms of the
+# morphology of the built environment and the functional
+# use (https://ghsl.jrc.ec.europa.eu/ghs_buC2023.php). The
+# pixel classification criteria are available in the
+# supporting data package PDF. The percentage grids here
+# have been aggregated from the 10m classification grid,
+# first by getting the per-class percentages at 1km
+# resolution in the original mollweide coordinate system,
+# and then reprojecting the output to wgs84 using bilinear
+# resampling.
+
+# classes
+# 01 : MSZ, open spaces, low vegetation surfaces NDVI <= 0.3
+# 02 : MSZ, open spaces, medium vegetation surfaces 0.3 < NDVI <=0.5
+# 03 : MSZ, open spaces, high vegetation surfaces NDVI > 0.5
+# 04 : MSZ, open spaces, water surfaces LAND < 0.5
+# 05 : MSZ, open spaces, road surfaces
+# 11 : MSZ, built spaces, residential, building height <= 3m
+# 12 : MSZ, built spaces, residential, 3m < building height <= 6m
+# 13 : MSZ, built spaces, residential, 6m < building height <= 15m
+# 14 : MSZ, built spaces, residential, 15m < building height <= 30m
+# 15 : MSZ, built spaces, residential, building height > 30m
+# 21 : MSZ, built spaces, non-residential, building height <= 3m
+# 22 : MSZ, built spaces, non-residential, 3m < building height <= 6m
+# 23 : MSZ, built spaces, non-residential, 6m < building height <= 15m
+# 24 : MSZ, built spaces, non-residential, 15m < building height <= 30m
+# 25 : MSZ, built spaces, non-residential, building height > 30m
+
+
+built_c <- list.files(
+  path = "data/MAP_covariates/GHSL_2023/GHS-BUILT-C/",
+  full.names = TRUE
+) %>%
+  sapply(
+    FUN = rast
+  ) %>%
+  rast
+
+built_c_names <- names(built_c) %>%
+  sub(
+    pattern = ".*R23A_",
+    replacement = "",
+    x = .
+  ) %>%
+  sub(
+    pattern = "\\.2018.*",
+    replacement = "",
+    x = .
+  ) %>%
+  paste0("built_c_", .) # need to fix these names
+
+names(built_c) <- built_c_names
+
+built_c <- terra::mask(built_c, covmask)
+
+built_c <- writereadrast(
+  built_C,
+  "output/rasters/covariates/built_c.grd"
+)
+
+built_c
+
+plot(built_c$built_c_Class-00)
 
 
 ### GHS_SMOD
