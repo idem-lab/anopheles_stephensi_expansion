@@ -1,161 +1,123 @@
-
-
-
-
+#' Takes a mobility data matrix, its associated location polygons in sf format,
+#' and a desired new polygon set, relevels the mobility data to the level of the
+#' new polygon set. The mobility data will be recalculated with weighting either
+#' based on the area intersection with the original polygons, or based on
+#' population proportion. That is, the original amount of mobility will be
+#' distributed to new polygon i,j pairs, according to how much area or
+#' population the new polygons share with original polygons.
+#'
+#' colnames are fixed for now, SORRY! will change
+#'
+#' @param original_geometry #expects an sf object
+#' @param new_geometry  #expects an sf object
+#' @param mobility_flow_matrix
+#' @param weighting_by
+#' @param pop_raster
+#'
+#' @return
+#' @export
+#'
+#' @examples
 relevel_mobility_data <- function(original_geometry, 
+                                  #original_geometry_unique_id,
                                   new_geometry,
+                                  #new_geometry_unique_id,
+                                  mobility_flow_matrix,
                                   weighting_by = c("pop","area"),
                                   pop_raster = NULL) {
   match.arg(weighting_by)
+  
+  #first build intersection of the geometries, which is independent of weighting
+  #might be a quirk with h3 to require this, not sure why
+  sf_use_s2(FALSE)
+  
+  #check if the column names match
+  if (!("old_id" %in% names(original_geometry))) stop("column old_id not in original_geometry")
+  if (!("new_id" %in% names(new_geometry))) stop("column old_id not in original_geometry")
+
+  
+  #intersect the two geometries
+  intersect_geometry <- sf::st_intersection(new_geometry,original_geometry)
   
   if (weighting_by == "pop") {
     message("performing re-leleving with mobility data weighted by source and destination population")
     
     if (is.null(pop_raster)) stop("weighting by population but pop raster is null!")
-    #use a pop raster to sample population in the original catchments
-    origin_zone_pop <- zonal(pop_raster,
-                             original_geometry,
+    
+    #use a pop raster to sample population in the insections
+    intersect_zone_pop <- terra::zonal(pop_raster,
+                             vect(intersect_geometry),
                              fun = sum,na.rm=TRUE)
     
-    #add to original zones
-    original_geometry$population <- origin_zone_pop
+    #add to intersect geometries 
+    intersect_geometry$pop <- intersect_zone_pop[, 1]
+    
+    #get pops of original geometries
+    intersect_pop_total <- intersect_geometry %>% #note we need use_pipe() when building this package!!!
+      sf::st_drop_geometry() %>% 
+      dplyr::group_by(old_id) %>% 
+      dplyr::summarise(total.pop = sum(pop))
+    
+    intersect_geometry <- intersect_geometry %>% 
+      sf::st_drop_geometry() %>% 
+      dplyr::left_join(intersect_pop_total) %>% 
+      #apply weight
+      mutate(weight = pop/total.pop)
+
     
   } else if (weighting_by == "area") {
     message("performing re-leleving with mobility data weighted by source and destination area")
+    
+    #get area of interset
+    intersect_geometry$area <- sf::st_area(intersect_geometry)
+    
+    #get areas of original geometries
+    intersect_area_total <- intersect_geometry %>% 
+      sf::st_drop_geometry() %>% 
+      dplyr::group_by(old_id) %>% 
+      dplyr::summarise(total.area = sum(area))
+    
+    intersect_geometry <- intersect_geometry %>% 
+      sf::st_drop_geometry() %>% 
+      dplyr::left_join(intersect_area_total) %>% 
+      #apply weight
+      mutate(weight = area/total.area)
+    
+
   } else {
     stop("unknown weighting method!")
   }
   
+  
+  intersect_mat <- reshape2::dcast(intersect_geometry,
+                                   old_id ~ new_id,
+                                    value.var = "weight", 
+                                    fun.aggregate = mean,
+                                    fill=0)
+  
+  rownames(intersect_mat) <- intersect_mat[["old_id"]]
+  intersect_mat <- as.matrix(intersect_mat[,2:ncol(intersect_mat)])
+  
+  #tally # of geos
+  n_original_geometries <- nrow(intersect_mat)
+  n_new_geometries <- ncol(intersect_mat)
+  
+  new_flow_mat <- matrix(0,
+                         nrow = n_new_geometries, 
+                         ncol = n_new_geometries)
+  
+  #iterate across original geometries to apply weighting
+  for (i in 1:n_original_geometries) {
+    for (j in 1:n_original_geometries) {
+      
+      this_flow_mat <- sapply(mobility_flow_matrix[i,j] * intersect_mat[i,],
+                              FUN = function(x) x * intersect_mat[j,])
+      
+      new_flow_mat <- new_flow_mat + this_flow_mat
+    }
+  }
+  
+  
+  return(new_flow_mat)
 }
   
-
-
-library(tidyverse)
-library(readr); library(sf); library(terra); library(maptools); library(movement); library(geodata); library(h3);library(reshape2)
-
-#get wopr for all countries
-
-global.pop <- rast("data/ppp_2020_1km_Aggregated.tif")
-plot(global.pop)
-
-#get flow data
-international.migration.flow.data <- read_csv("data/SexDisaggregated_Migration/MigrationEstimates/MigrEst_international_v7.csv")
-subnational.migration.flow.data <- read_csv("data/SexDisaggregated_Migration/MigrationEstimates/MigrEst_internal_v4.csv")
-
-#target ext
-target.ext <- ext(-32.9770992366411, 100.30534351145, -36.7374249758784, 43.4248387475794)
-
-#get centroids
-international.migration.flow.geometry <- vect("data/SexDisaggregated_Migration/SpatialData/")
-international.migration.flow.geometry <- international.migration.flow.geometry %>% 
-  subset(international.migration.flow.geometry$CONT %in% c("AFR","ASI"))
-
-
-international.migration.flow.geometry <- crop(international.migration.flow.geometry,target.ext)
-
-plot(international.migration.flow.geometry)
-
-#get country lists
-countries <- unique(international.migration.flow.geometry$ISO)
-
-countries.with.ssd <- countries
-countries.with.ssd[countries.with.ssd=="SUD"] <- "SDN"
-countries.with.ssd <- c(countries.with.ssd,"SSD","ESH")
-#get admin1 polygon
-
-
-admin1.outline <- gadm(countries.with.ssd, level=1, path = "data/gadm/", version="latest", resolution=1)
-
-
-
-#   vect("data/ne_10m_admin_1_states_provinces/")
-# admin1.outline <- admin1.outline[,c("adm0_a3","adm1_code")]
-# 
-# admin1.outline <- admin1.outline %>% subset(admin1.outline$adm0_a3 %in% countries)
-
-admin1.outline <- crop(admin1.outline,target.ext)
-
-#plot(admin1.outline)
-
-
-admin1.pop <- zonal(global.pop,
-                    admin1.outline,
-                    fun = sum,na.rm=TRUE)
-
-admin1.outline$population <- admin1.pop
-admin1.outline$weight <- admin1.outline$population / sum(admin1.outline$population, na.rm = TRUE)
-
-#plot(admin1.outline,"weight")
-
-
-# 
-# flowlines <- vect("data/SexDisaggregated_Migration/SpatialData/Flowlines/international/")
-# flowlines <- crop(flowlines,target.ext)
-# plot(flowlines)
-
-test <- st_as_sf(international.migration.flow.geometry)
-
-test.hex <- geo_to_h3(test, res = 0)
-test.hex <- unique(test.hex)
-test.hex <- h3_to_geo_boundary_sf(test.hex)
-plot(test.hex)
-
-
-
-admin0.outline <- gadm(countries.with.ssd, level=0, 
-                       path = "data/gadm/", 
-                       version="latest", 
-                       resolution=1)
-
-admin0.outline <- crop(admin0.outline,target.ext)
-
-#plot(admin0.outline)
-
-test <- st_as_sf(admin0.outline)
-
-test <- test[unique(test$COUNTRY),]
-#plot(test)
-sf_use_s2(FALSE)
-# test <- st_make_valid(test)
-# test.hex <- st_make_valid(test.hex)
-
-test_intersect <- st_intersection(test.hex,test)
-
-plot(test_intersect[1:10,])
-
-
-test_intersect %>% filter(COUNTRY == "Angola") %>% summarise(n = length(unique(h3_index)))
-
-test_intersect$area <- st_area(test_intersect)
-
-test_intersect.total <- test_intersect %>% as_tibble() %>% 
-  group_by(COUNTRY) %>% 
-  summarise(total.area = sum(area))
-
-
-test_intersect <- test_intersect %>% 
-  left_join(test_intersect.total)
-
-test_intersect$weight <- test_intersect$area/test_intersect$total.area
-test_intersect$weight <- as.numeric(test_intersect$weight)
-
-
-test_intersect_tibble <- test_intersect %>% st_drop_geometry()
-
-test_intersect_tibble.1 <- dcast(test_intersect_tibble,
-                                 COUNTRY ~ h3_index,
-                                 value.var = "weight", 
-                                 fun.aggregate = mean,
-                                 fill=0)
-
-rownames(test_intersect_tibble.1) <- test_intersect_tibble.1$COUNTRY
-intersect_mat <- as.matrix(test_intersect_tibble.1[,2:26])
-
-fake_flow_mat <- matrix(1,82,82)
-
-fake_flow_mat * intersect_mat %>% View
-#test_intersect %>% as_tibble() %>% group_by(COUNTRY) %>% summarise(sum(weight))
-
-test.hex <- polyfill(country.outline, res = 1)
-test.hex <- h3_to_geo_boundary_sf(test.hex)
-plot(test.hex)
