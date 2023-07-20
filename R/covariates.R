@@ -296,6 +296,7 @@ built_volume
 # resampling.
 
 # classes
+# 00 : other (doesn't fit these classifications)
 # 01 : MSZ, open spaces, low vegetation surfaces NDVI <= 0.3
 # 02 : MSZ, open spaces, medium vegetation surfaces 0.3 < NDVI <=0.5
 # 03 : MSZ, open spaces, high vegetation surfaces NDVI > 0.5
@@ -312,7 +313,6 @@ built_volume
 # 24 : MSZ, built spaces, non-residential, 15m < building height <= 30m
 # 25 : MSZ, built spaces, non-residential, building height > 30m
 
-
 built_c <- list.files(
   path = "data/MAP_covariates/GHSL_2023/GHS-BUILT-C/",
   full.names = TRUE
@@ -322,31 +322,98 @@ built_c <- list.files(
   ) %>%
   rast
 
-built_c_names <- names(built_c) %>%
-  sub(
-    pattern = ".*R23A_",
-    replacement = "",
-    x = .
-  ) %>%
-  sub(
-    pattern = "\\.2018.*",
-    replacement = "",
-    x = .
-  ) %>%
-  paste0("built_c_", .) # need to fix these names
+# built_c_names <- names(built_c) %>%
+#   sub(
+#     pattern = ".*R23A_",
+#     replacement = "",
+#     x = .
+#   ) %>%
+#   sub(
+#     pattern = "\\.2018.*",
+#     replacement = "",
+#     x = .
+#   ) %>%
+#   paste0("built_c_", .)
+
+built_c_names <- c(
+  "00_other",
+  "01_open_low",
+  "02_open_med",
+  "03_open_high",
+  "04_open_water",
+  "05_open_road",
+  "11_residential_0_3",
+  "12_residential_3_6",
+  "13_residential_6_15",
+  "14_residential_15_30",
+  "15_residential_30plus",
+  "21_nonresidential_0_3",
+  "22_nonresidential_3_6",
+  "23_nonresidential_6_15",
+  "24_nonresidential_15_30",
+  "25_nonresidential_30plus"
+) %>%
+  paste0("built_c_", .)
 
 names(built_c) <- built_c_names
 
 built_c <- terra::mask(built_c, covmask)
 
 built_c <- writereadrast(
-  built_C,
+  built_c,
   "output/rasters/covariates/built_c.grd"
 )
 
 built_c
 
-plot(built_c$built_c_Class-00)
+ne <- c(
+  2.91081917173319,
+  10.1096654308828,
+  4.09070641282907,
+  9.19483132932854
+) %>%
+  ext # area of coastal Nigeria incl Lagos on SW
+
+ne <- c(
+  2.91081917173319,
+  4,
+  6.3,
+  7
+) %>%
+  ext # focus on lagos
+
+plot(built_c$built_c_00_other)
+plot(built_c$built_c_00_other, ext = ne)
+plot(built_c$built_c_01_open_low)
+plot(built_c$built_c_01_open_low, ext = ne)
+plot(built_c$built_c_01_open_med)
+plot(built_c$built_c_02_open_med, ext = ne)
+plot(built_c$built_c_03_open_high)
+plot(built_c$built_c_03_open_high, ext = ne)
+plot(built_c$built_c_04_open_water)
+plot(built_c$built_c_04_open_water, ext = ne)
+plot(built_c$built_c_05_open_road)
+plot(built_c$built_c_05_open_road, ext = ne)
+plot(built_c$built_c_11_residential_0_3)
+plot(built_c$built_c_11_residential_0_3, ext = ne)
+plot(built_c$built_c_12_residential_3_6)
+plot(built_c$built_c_12_residential_3_6, ext = ne)
+plot(built_c$built_c_13_residential_6_15)
+plot(built_c$built_c_13_residential_6_15, ext = ne)
+plot(built_c$built_c_14_residential_15_30)
+plot(built_c$built_c_14_residential_15_30, ext = ne)
+plot(built_c$built_c_15_residential_30plus)
+plot(built_c$built_c_15_residential_30plus, ext = ne)
+plot(built_c$built_c_21_nonresidential_0_3)
+plot(built_c$built_c_21_nonresidential_0_3, ext = ne)
+plot(built_c$built_c_22_nonresidential_3_6)
+plot(built_c$built_c_22_nonresidential_3_6, ext = ne)
+plot(built_c$built_c_23_nonresidential_6_15)
+plot(built_c$built_c_23_nonresidential_6_15, ext = ne)
+plot(built_c$built_c_24_nonresidential_15_30)
+plot(built_c$built_c_24_nonresidential_15_30, ext = ne)
+plot(built_c$built_c_25_nonresidential_30plus)
+plot(built_c$built_c_25_nonresidential_30plus, ext = ne)
 
 
 ### GHS_SMOD
@@ -852,7 +919,8 @@ prbuilt <- prcomp(prcdat[samples, 2:4], scale. = TRUE)
 prbuilt
 summary(prbuilt)
 # 96% coverage by one component. 
-# suggest using just built_volume instead of a pc of the three, as volume includes height and surface
+# suggest using just built_volume instead of a pc of the three, as volume
+# includes height and surface
 
 pairs(
   prcdat[samples, 2:4]
@@ -887,7 +955,8 @@ accessibility <- rast("output/rasters/covariates/accessibility.grd")
 #ghs_smod
 built_height <- rast("output/rasters/covariates/built_height.grd")
 built_surface <- rast("output/rasters/covariates/built_surface.grd")
-built_volume <- rast("output/rasters/covariates/built_volume.gri")
+built_volume <- rast("output/rasters/covariates/built_volume.grd")
+built_c <- rast("output/rasters/covariates/built_c.grd")
 smod <- rast("output/rasters/covariates/smod.grd")
 landcover <- rast("output/rasters/covariates/landcover.grd")
 lst_day <- rast("output/rasters/covariates/lst_day.grd")
@@ -897,3 +966,4 @@ rainfall <- rast("output/rasters/covariates/rainfall.grd")
 tcb <- rast("output/rasters/covariates/tcb.grd")
 tcw <- rast("output/rasters/covariates/tcw.grd")
 pop <- rast("output/rasters/covariates/pop.grd")
+
