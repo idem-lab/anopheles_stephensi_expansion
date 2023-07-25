@@ -29,7 +29,7 @@ relevel_mobility_data <- function(original_geometry,
   
   #first build intersection of the geometries, which is independent of weighting
   #might be a quirk with h3 to require this, not sure why
-  sf_use_s2(FALSE)
+  #sf_use_s2(FALSE)
   
   #check if the column names match
   if (!("old_id" %in% names(original_geometry))) stop("column old_id not in original_geometry")
