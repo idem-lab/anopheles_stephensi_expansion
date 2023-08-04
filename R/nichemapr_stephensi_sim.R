@@ -848,13 +848,28 @@ coords_list <- coords_agg[valid_cells, ] %>%
   as_tibble() %>%
   split(seq_len(nrow(.)))
 
-# run suitability for all pixels, sequentially as nichemapr seems to bug out in multisession
-library(future.apply)
-plan(sequential)
+# run suitability for all pixels
 
+# for some reason, nichemapr seems to error with any future plan except
+# sequential, so go old school and use snowfall!
+library(snowfall)
+sfInit(parallel = TRUE, cpus = 8)
+sfLibrary(NicheMapR)
+sfLibrary(tidyverse)
+sfExport(list = list("model_conditions",
+                     "simulate_population",
+                     "mdr_function",
+                     "das_function",
+                     "efd_function",
+                     "ds_function",
+                     "ds_temp_humid",
+                     "iterate_state",
+                     "create_matrix",
+                     "summarise_dynamics"))
 time_agg <- system.time(
-  results_list <- future_lapply(coords_list, calculate_stephensi_suitability)
+  results_list <- sfLapply(coords_list, calculate_stephensi_suitability)
 )
+sfStop()
 
 # # site long 35.3333333333333 lat 32
 # 
