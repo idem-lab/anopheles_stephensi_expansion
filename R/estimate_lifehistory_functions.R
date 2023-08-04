@@ -551,6 +551,21 @@ dehydrate_lifehistory_function <- function(fun, path_to_object) {
         1 - daily_mortality
       }
     )
+  } else if (identical(names(arguments), c("temperature", "humidity", "species"))) {
+    object <- list(
+      arguments = arguments,
+      temp_humid_function_raw = e$ds_temp_humid_raw,
+      model = e$adult_mortality_model,
+      log_hazard_correction = e$log_hazard_correction,
+      dummy_function = function() {
+        object$temp_humid_function_raw(
+          temperature = temperature,
+          humidity = humidity,
+          species = species,
+          model = object$model,
+          log_hazard_correction = object$log_hazard_correction)
+      }
+    )
   } else {
     stop("cannot dehydrate this function")
   }
@@ -1197,9 +1212,7 @@ adult_survival_data <- bind_rows(
   ungroup() %>%
   # use the survival interval times the number of trials as the offset (NB approximation to the betabinomial)
   mutate(
-    offset = log(duration * alive_start),
-    As_mask = as.numeric(species == "An. stephensi"),
-    temperature_As = temperature * As_mask
+    offset = log(duration * alive_start)
   ) %>%
   # remove rows for time zero starting values (anywhere there weren't mossies
   # alive at the start)
@@ -1213,40 +1226,37 @@ adult_survival_data <- bind_rows(
 # so we need extra observation-level variance. Betabinomial is not possible in.
 # mgcv, so we use a negative binomial approximation to the BB
 
-m <- mgcv::gam(died_end ~ 1 +
-                 # intercept for species, and for the preferred study type (to
-                 # account for differences in colony age)
-                 species +
-                 # non_preferred +
-                 # nonlinear interaction between them
-                 s(temperature, log(humidity), k = 15) +
-                 # linear effect of mosquito age (duration of exposure)
-                 time * study,
-               # penalise all effects to zero (lasso-like regulariser)
-               select = TRUE,
-               data = adult_survival_data,
-               # apply extra smoothing, to ad-hoc account for additional noise
-               # in the observations
-               gamma = 10,
-               # fit with REML
-               method = "REML",
-               # account for the differing durations of the observation periods
-               # using a cloglog and offset (proportional hazards model with
-               # double censoring)
-               offset = adult_survival_data$offset,
-               family = mgcv::nb(link = "log")
-               # set the scale estimator to avoid a bug (there shouldn't be a
-               # scale parameter anyway)
-               # control = list(scale.est = "deviance")
+adult_mortality_model <- mgcv::gam(died_end ~ 1 +
+                                     # intercept for species, and for the preferred study type (to
+                                     # account for differences in colony age)
+                                     species +
+                                     # nonlinear interaction between them
+                                     s(temperature, log(humidity), k = 15) +
+                                     # linear effect of mosquito age (duration of exposure)
+                                     time * study,
+                                   # penalise all effects to zero (lasso-like regulariser)
+                                   select = TRUE,
+                                   data = adult_survival_data,
+                                   # apply extra smoothing, to incorporate a
+                                   # priori information that this should be a
+                                   # smooth function
+                                   gamma = 10,
+                                   # fit with REML
+                                   method = "REML",
+                                   # account for the differing durations of the observation periods
+                                   # using a cloglog and offset (proportional hazards model with
+                                   # double censoring)
+                                   offset = adult_survival_data$offset,
+                                   family = mgcv::nb(link = "log")
 )
-summary(m)
-gratia::draw(m)
-mgcv::gam.check(m)
+summary(adult_mortality_model)
+gratia::draw(adult_mortality_model)
+mgcv::gam.check(adult_mortality_model)
 
 # use randomised quantile residuals to check model fit
 
 library(DHARMa)
-sims <- simulateResiduals(m)
+sims <- simulateResiduals(adult_mortality_model)
 testOutliers(sims, type = "bootstrap")
 plot(sims)
 
@@ -1290,14 +1300,13 @@ ggplot(resid_checks,
 # = 25.6, humidity = 80%. Compute a correction on the hazard scale for the
 # lab-based survival estimates.
 mortality_prob_to_log_hazard <- function(mortality_prob) log(-log(1 - mortality_prob))
-log_hazard_to_mortality_prob <- function(log_hazard) 1 - exp(-exp(log_hazard))
+# log_hazard_to_mortality_prob <- function(log_hazard) 1 - exp(-exp(log_hazard))
 
 df_ifakara <- data.frame(temperature = 25.6,
                          humidity = 80,
                          sex = "F",
                          time = sqrt(.Machine$double.eps),
                          species = "An. gambiae",
-                         temperature_As = 0,
                          replicate = 1,
                          id = 1,
                          non_preferred = 0,
@@ -1305,12 +1314,13 @@ df_ifakara <- data.frame(temperature = 25.6,
                          study = "krajacich",
                          off = 0)
 
-lab_daily_log_hazard <- predict(m, df_ifakara, type = "link")[1]
+lab_daily_log_hazard <- predict(adult_mortality_model, df_ifakara, type = "link")[1]
 field_daily_log_hazard <- mortality_prob_to_log_hazard(1 - 0.83)
 log_hazard_correction <- field_daily_log_hazard - lab_daily_log_hazard
 
 # construct function of temperature and humidity
-ds_temp_humid <- function(temperature, humidity, species, epsilon = sqrt(.Machine$double.eps)) {
+ds_temp_humid_raw <- function(temperature, humidity, species, model, log_hazard_correction) {
+  epsilon <- sqrt(.Machine$double.eps)
   df <- data.frame(
     temperature = pmax(epsilon, temperature),
     humidity = pmax(epsilon, humidity),
@@ -1322,20 +1332,18 @@ ds_temp_humid <- function(temperature, humidity, species, epsilon = sqrt(.Machin
     study = ifelse(species == "An. gambiae",
                    "krajacich",
                    "miazgowicz"),
-    temperature_As = case_when(
-      species == "An. stephensi" ~ temperature,
-      .default = 0
-    ),
     replicate = 1
   )
-  # browser()
-  # lab_mortality_link <- predict(m, df, type = "link")
-  # lab_mortality_prob <- 1 - exp(-exp(lab_mortality_link))
-  lab_mortality_prob <- predict(m, df, type = "response")
-  lab_daily_log_hazard <- mortality_prob_to_log_hazard(lab_mortality_prob)
+  lab_daily_log_hazard <- predict(model, df, type = "link")
   field_daily_log_hazard <- lab_daily_log_hazard + log_hazard_correction
-  field_mortality_prob <- log_hazard_to_mortality_prob(field_daily_log_hazard)
+  field_mortality_prob <- 1 - exp(-exp(field_daily_log_hazard))
   1 - field_mortality_prob
+}
+
+ds_temp_humid <- function(temperature, humidity, species) {
+  ds_temp_humid_raw(temperature, humidity, species,
+                    model = adult_mortality_model,
+                    log_hazard_correction = log_hazard_correction)
 }
 
 ds_temp_humid_Ag <- function(temperature, humidity) {
@@ -1443,7 +1451,8 @@ ggsave("figures/lifehistory_adult_survival.png",
        bg = "white",
        width = 7,
        height = 5)
-# and export the survival model as before
+
+# need to export the survival model as before
 
 
 
@@ -1467,6 +1476,9 @@ dehydrate_lifehistory_function(pea_temp_Ag, file.path(storage_path, "pea_temp_Ag
 
 # DAS ~ temp + density
 dehydrate_lifehistory_function(das_temp_dens_As, file.path(storage_path, "das_temp_dens_As.RDS"))
+
+# AS ~ temp + humidity + species
+dehydrate_lifehistory_function(ds_temp_humid, file.path(storage_path, "ds_temp_humid.RDS"))
 
 # use the following function to rehydrate them, e.g.:
 #   storage_path <- "data/life_history_params/dehydrated"
