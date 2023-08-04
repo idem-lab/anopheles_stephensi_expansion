@@ -723,9 +723,14 @@ load_miazgowicz_data <- function() {
       Block,
       Day
     ) %>%
+    # Dead column is coded as 1 for dead, 0 for alive, and 2 for censored
+    # (alive, but study discontinued), so recode these censored observations as alive, and count the number of observations
+    # mutate(
+    #   dead = as.numeric(Dead != 1)
+    # ) %>%
     summarise(
-      alive = n_distinct(Female[Dead == 0]),
-      died = sum(Dead),
+      alive = n_distinct(Female[Dead %in% c(0, 2)]),
+      died = n_distinct(Female[Dead %in% c(1)]),
       .groups = "drop"
     ) %>%
     group_by(
@@ -1167,75 +1172,165 @@ adult_survival_data <- bind_rows(
   mutate(
     species = factor(species),
     study = factor(study),
-    offset = log(pmax(time, 0.00001)),
     # Define a preferred study for each species, to account for study
     # differences, without confounding the species differences. For An gambiae,
-    # the preferred study is the one with the youngest colony. For an. stephensi
+    # the preferred study is the one with the youngest colony. For An. stephensi
     # they are from the same colony (v. old), so just picking one at random
     non_preferred = case_when(
-      study %in% c("krajacich", "shapiro") ~ 0,
+      study %in% c("krajacich", "miazgowicz") ~ 0,
       .default = 1
     ),
     id = row_number()
+  ) %>%
+  # treat each observation period as an independent observation, so account for
+  # the number starting each time period (alive_start) and compute the number
+  # that died (died_end) and number that lived (alive_end) in that period
+  group_by(temperature, humidity, sex, replicate, species, study) %>%
+  mutate(
+    alive_start = c(0, alive[-n()]),
+    died_end = c(0, diff(died_cumulative)),
+    alive_end = alive_start - died_end,
+    # how long was this survival interval?
+    duration = c(0, diff(time)),
+    .after = alive
+  ) %>%
+  ungroup() %>%
+  # use the survival interval times the number of trials as the offset (NB approximation to the betabinomial)
+  mutate(
+    offset = log(duration * alive_start),
+    As_mask = as.numeric(species == "An. stephensi"),
+    temperature_As = temperature * As_mask
+  ) %>%
+  # remove rows for time zero starting values (anywhere there weren't mossies
+  # alive at the start)
+  filter(
+    alive_start != 0,
+    sex == "F"
   )
 
+# we could model this as binomial with cloglog (survival model with proportional
+# hazards), but there is additional dispersion even after fitting smooth terms,
+# so we need extra observation-level variance. Betabinomial is not possible in.
+# mgcv, so we use a negative binomial approximation to the BB
 
-# need extra variation - betabinomial-like?
-
-# our use of cloglog uses datasets many times, is that correct?
-
-# fitted with REML. Changed scale estimator to avoid a bug (the shouldn't be a
-# scale parameter anyway)
-m <- mgcv::gam(cbind(died_cumulative, alive) ~ 1 +
-                 sex * species * non_preferred +
-                 s(temperature) +
-                 humidity +
-                 te(temperature, humidity, k = 4),
+m <- mgcv::gam(died_end ~ 1 +
+                 # intercept for species, and for the preferred study type (to
+                 # account for differences in colony age)
+                 species +
+                 # non_preferred +
+                 # nonlinear interaction between them
+                 s(temperature, log(humidity), k = 15) +
+                 # linear effect of mosquito age (duration of exposure)
+                 time * study,
+               # penalise all effects to zero (lasso-like regulariser)
+               select = TRUE,
                data = adult_survival_data,
-               # gamma = 100,
+               # apply extra smoothing, to ad-hoc account for additional noise
+               # in the observations
+               gamma = 10,
+               # fit with REML
                method = "REML",
+               # account for the differing durations of the observation periods
+               # using a cloglog and offset (proportional hazards model with
+               # double censoring)
                offset = adult_survival_data$offset,
-               family = stats::binomial("cloglog"),
-               control = list(scale.est = "deviance"))
+               family = mgcv::nb(link = "log")
+               # set the scale estimator to avoid a bug (there shouldn't be a
+               # scale parameter anyway)
+               # control = list(scale.est = "deviance")
+)
+summary(m)
+gratia::draw(m)
+mgcv::gam.check(m)
+
+# use randomised quantile residuals to check model fit
+
+library(DHARMa)
+sims <- simulateResiduals(m)
+testOutliers(sims, type = "bootstrap")
+plot(sims)
+
+# mostly it's fine, but there are still some outliers
+
+# get target-normally-distributed residuals, to explore lack of fit
+resid_checks <- adult_survival_data %>%
+  select(
+    time,
+    temperature,
+    humidity,
+    species,
+    study
+  ) %>%
+  mutate(
+    resid = qnorm(sims$scaledResiduals)
+  )
+
+# this should look uniform
+hist(pnorm(resid_checks$resid))
+
+# what proportion of datapoints are outliers?
+round(100 * mean(!is.finite(resid_checks$resid)), 1)
+
+# plot where these fall in time vs temp
+ggplot(resid_checks,
+       aes(y = jitter(time),
+           x = jitter(temperature),
+           color = is.finite(resid),
+           size = !is.finite(resid),
+           group = study)) +
+  geom_point(
+    alpha = 0.3,
+    pch = 16
+  ) +
+  facet_grid(~ study)
+
 
 # This is in a lab; field mortality is much greater. Charlwood (1997) estimates
 # daily adult survival for An gambiae at around 0.83 in Ifakara with temperature
 # = 25.6, humidity = 80%. Compute a correction on the hazard scale for the
 # lab-based survival estimates.
+mortality_prob_to_log_hazard <- function(mortality_prob) log(-log(1 - mortality_prob))
+log_hazard_to_mortality_prob <- function(log_hazard) 1 - exp(-exp(log_hazard))
 
 df_ifakara <- data.frame(temperature = 25.6,
                          humidity = 80,
                          sex = "F",
+                         time = sqrt(.Machine$double.eps),
                          species = "An. gambiae",
+                         temperature_As = 0,
                          replicate = 1,
                          id = 1,
                          non_preferred = 0,
+                         # freshest An. gambiae population we have data for
                          study = "krajacich",
                          off = 0)
-lab_mortality_prob <- predict(m, df_ifakara, type = "response")[1]
-field_mortality_prob <- 1 - 0.83
 
-mortality_prob_to_log_hazard <- function(mortality_prob) log(-log(1 - mortality_prob))
-log_hazard_to_mortality_prob <- function(log_hazard) 1 - exp(-exp(log_hazard))
-
-lab_daily_log_hazard <- mortality_prob_to_log_hazard(lab_mortality_prob)
-field_daily_log_hazard <- mortality_prob_to_log_hazard(field_mortality_prob)
-log_hazard_correction = field_daily_log_hazard - lab_daily_log_hazard
+lab_daily_log_hazard <- predict(m, df_ifakara, type = "link")[1]
+field_daily_log_hazard <- mortality_prob_to_log_hazard(1 - 0.83)
+log_hazard_correction <- field_daily_log_hazard - lab_daily_log_hazard
 
 # construct function of temperature and humidity
-ds_temp_humid <- function(temperature, humidity, species) {
+ds_temp_humid <- function(temperature, humidity, species, epsilon = sqrt(.Machine$double.eps)) {
   df <- data.frame(
-    temperature = temperature,
-    humidity = humidity,
+    temperature = pmax(epsilon, temperature),
+    humidity = pmax(epsilon, humidity),
+    time = epsilon,
     sex = "F",
     id = 1,
     species = species,
     non_preferred = 0,
     study = ifelse(species == "An. gambiae",
                    "krajacich",
-                   "shapiro"),
+                   "miazgowicz"),
+    temperature_As = case_when(
+      species == "An. stephensi" ~ temperature,
+      .default = 0
+    ),
     replicate = 1
   )
+  # browser()
+  # lab_mortality_link <- predict(m, df, type = "link")
+  # lab_mortality_prob <- 1 - exp(-exp(lab_mortality_link))
   lab_mortality_prob <- predict(m, df, type = "response")
   lab_daily_log_hazard <- mortality_prob_to_log_hazard(lab_mortality_prob)
   field_daily_log_hazard <- lab_daily_log_hazard + log_hazard_correction
@@ -1283,10 +1378,6 @@ survival_summary <- adult_survival_data %>%
     replicate,
     sex
   ) %>%
-  mutate(
-    died = c(0, diff(died_cumulative)),
-    total = alive + died
-  ) %>%
   ungroup() %>%
   group_by(
     species,
@@ -1294,8 +1385,8 @@ survival_summary <- adult_survival_data %>%
     humidity
   ) %>%
   summarise(
-    alive = sum(alive),
-    total = sum(total),
+    alive = sum(alive_end),
+    total = sum(alive_start),
     .groups = "drop"
   ) %>%
   mutate(
@@ -1333,6 +1424,12 @@ ggplot(density_plotting,
     shape = 16,
     size = 4
   ) +
+  geom_point(
+    data = survival_summary,
+    shape = 21,
+    colour = grey(0.4),
+    size = 4
+  ) +
   scale_fill_discrete(type = cols) +
   scale_color_discrete(type = cols) +
   theme_minimal() +
@@ -1342,9 +1439,10 @@ ggplot(density_plotting,
   ylab("Humidity(%)") +
   xlab("Temperature (C)")
 
-
-# how to make it depend less on krajacich?
-
+ggsave("figures/lifehistory_adult_survival.png",
+       bg = "white",
+       width = 7,
+       height = 5)
 # and export the survival model as before
 
 
