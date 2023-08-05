@@ -831,7 +831,7 @@ coords <- xyFromCell(region_raster_mask, cells(region_raster_mask))
 
 # aggregate it 2x to get a lower resolution set of coordinates for second pass -
 # original resolution is ~18.5km at the equator
-region_raster_mask_agg <- aggregate(region_raster_mask, 2)
+region_raster_mask_agg <- aggregate(region_raster_mask, 4)
 coords_agg <- xyFromCell(region_raster_mask_agg, cells(region_raster_mask_agg))
 nrow(coords_agg)
 
@@ -869,7 +869,8 @@ sfExport(list = list("model_conditions",
 time_agg <- system.time(
   results_list <- sfLapply(coords_list, calculate_stephensi_suitability)
 )
-sfStop()
+
+
 
 # # site long 35.3333333333333 lat 32
 # 
@@ -882,8 +883,10 @@ sfStop()
 # nrow(coords_agg)
 
 # time in minutes - 41 for aggregated
+# in parallel, 191 mins @ agg 4
 time_agg["elapsed"] / 60
 
+sfStop()
 
 # add on the coordinates
 index_list <- lapply(seq_along(coords_list), function(x) tibble(cell_index = x))
@@ -943,6 +946,11 @@ ggplot() +
   theme_minimal() +
   ggtitle("Predicted number of months per year suitable for\nAn. stephensi persistence in microclimate")
 
+ggsave("figures/mechanistic_persistence.png",
+       bg = "white",
+       width = 9,
+       height = 7)
+
 ggplot() +
   geom_spatraster(
     data = annual_relative_abundance_agg,
@@ -960,6 +968,10 @@ ggplot() +
   theme_minimal() +
   ggtitle("Predicted climatic suitability for An. stephensi\ninside a microclimate")
 
+ggsave("figures/mechanistic_suitability.png",
+       bg = "white",
+       width = 9,
+       height = 7)
 
 # note: we could consider switching to the terraclimate inputs and run over
 # actual time? It might not be much slower to run for a decade, given overheads
