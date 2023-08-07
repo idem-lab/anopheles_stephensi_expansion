@@ -551,6 +551,21 @@ dehydrate_lifehistory_function <- function(fun, path_to_object) {
         1 - daily_mortality
       }
     )
+  } else if (identical(names(arguments), c("temperature", "humidity", "species"))) {
+    object <- list(
+      arguments = arguments,
+      temp_humid_function_raw = e$ds_temp_humid_raw,
+      model = e$adult_mortality_model,
+      log_hazard_correction = e$log_hazard_correction,
+      dummy_function = function() {
+        object$temp_humid_function_raw(
+          temperature = temperature,
+          humidity = humidity,
+          species = species,
+          model = object$model,
+          log_hazard_correction = object$log_hazard_correction)
+      }
+    )
   } else {
     stop("cannot dehydrate this function")
   }
@@ -558,6 +573,304 @@ dehydrate_lifehistory_function <- function(fun, path_to_object) {
   saveRDS(object, path_to_object)
   
 }
+
+# load An. gambiae adult survival data under temperature and humidity treatments
+# from Bayoh's thesis
+load_bayoh_data <- function() {
+  read_csv(
+    "data/life_history_params/adult_survival/bayoh/bayoh_an_gambiae_adult_survival.csv",
+    col_types = cols(
+      temperature = col_double(),
+      humidity = col_double(),
+      sex = col_character(),
+      time = col_double(),
+      died_cumulative = col_double(),
+      alive = col_double()
+    )) %>%
+    mutate(
+      sex = case_when(
+        is.na(sex) ~ "mixed",
+        .default = sex),
+      replicate = 1,
+      species = "An. gambiae",
+      study = "bayoh"
+    )
+}
+
+# load data from Krajacich et al. 2020
+# https://doi.org/10.1186/s13071-020-04276-y on An gambiae adult survival under
+# temperature and humidity combinations, when attempting to induce aestivation,
+# and when not.
+load_krajacich_data <- function() {
+  krajacich <- read_csv("data/life_history_params/adult_survival/krajacich/aestivation.manu.files.scripts/22-Jan-18-R.formatted.masterlist.csv",
+                        col_types = cols(
+                          Experiment = col_character(),
+                          Primed.as = col_character(),
+                          Primed = col_character(),
+                          Temp = col_character(),
+                          `Date of death` = col_double(),
+                          Censor = col_double()
+                        )) %>%
+    # temperatures and humidities were variable for some of these, so remove and
+    # keep only the constant and clearly recorded temperatures
+    filter(
+      Temp != "SE",
+      Temp != "18.male"
+    ) %>%
+    mutate(
+      Temp = as.numeric(Temp)
+    ) %>%
+    # combine priming and experiments to get different replicates
+    mutate(
+      replicate = paste(Experiment, Primed.as, Primed, sep = "_"),
+      replicate = match(replicate, unique(replicate))
+    ) %>%
+    select(
+      -Experiment,
+      -Primed.as,
+      -Primed
+    ) %>%
+    rename(
+      temperature = Temp,
+      time = `Date of death`,
+      status = Censor
+    )
+    
+
+  # each row is an individual mosquito, Date of death is actually the last day
+  # in the timeseries for that mosquito, and status is whether they were alive
+  # (ie. when the experiment stopped) or dead (ie. day is the day they died)
+  # then. We need to get the number alive at the start of each day (per
+  # experiment and temp and humidity), and the number dying on that day
+  
+  # get all possible days, for all experiments
+  all_combos <- expand_grid(
+    replicate = unique(krajacich$replicate),
+    temperature = unique(krajacich$temperature),
+    time = seq(min(krajacich$time), max(krajacich$time))
+  )
+  
+  # get the number of mosquitos at the start of each of these experiments
+  starting <- krajacich %>%
+    group_by(
+      replicate,
+      temperature
+    ) %>%
+    summarise(
+      starting = n(),
+      .groups = "drop"
+    )
+  
+  # and the numbers dying on each day that one or more died on
+  died <- krajacich %>%
+    group_by(
+      replicate,
+      temperature,
+      time
+    ) %>%
+    summarise(
+      died = sum(status == 1),
+      .groups = "drop"
+    ) 
+  
+  # pull these all together, and add on other info
+  all_combos %>%
+    left_join(
+      starting,
+      by = join_by(replicate, temperature)
+    ) %>%
+    left_join(
+      died,
+      by = join_by(replicate, temperature, time)
+    ) %>%
+    mutate(
+      died = replace_na(died, 0)
+    ) %>%
+    arrange(
+      replicate,
+      temperature,
+      time
+    ) %>%
+    group_by(
+      replicate,
+      temperature
+    ) %>%
+    mutate(
+      died_cumulative = cumsum(died)
+    ) %>%
+    ungroup() %>%
+    mutate(
+      alive = starting - died_cumulative
+    ) %>%
+    select(
+      -starting,
+      -died
+    ) %>%
+    mutate(
+      sex = "F",
+      species = "An. gambiae",
+      humidity = 85,
+      study = "krajacich"
+    )
+}
+
+# load An stephensi adult survival data under temperature treatments from
+# Miazgowicz et al. 2020 https://doi.org/10.1098/rspb.2020.1093, from Data
+# dryad: https://doi.org/10.5061/dryad.8cz8w9gmd and prepare for modelling
+load_miazgowicz_data <- function() {
+  miazgowicz <- read_csv("data/life_history_params/adult_survival/miazgowicz/constant_master.csv",
+                         col_types = cols(
+                           Date = col_character(),
+                           Time = col_time(format = ""),
+                           Treatment = col_double(),
+                           Block = col_double(),
+                           Donor = col_double(),
+                           Female = col_double(),
+                           Feed = col_double(),
+                           Size = col_character(),
+                           Laid = col_double(),
+                           Count = col_double(),
+                           Dead = col_double(),
+                           Day = col_double()
+                         )) %>%
+    group_by(
+      Treatment,
+      Block,
+      Day
+    ) %>%
+    # Dead column is coded as 1 for dead, 0 for alive, and 2 for censored
+    # (alive, but study discontinued), so recode these censored observations as alive, and count the number of observations
+    # mutate(
+    #   dead = as.numeric(Dead != 1)
+    # ) %>%
+    summarise(
+      alive = n_distinct(Female[Dead %in% c(0, 2)]),
+      died = n_distinct(Female[Dead %in% c(1)]),
+      .groups = "drop"
+    ) %>%
+    group_by(
+      Treatment,
+      Block
+    ) %>%
+    mutate(
+      died_cumulative = cumsum(died),
+      humidity = 80,
+      sex = "F",
+      species = "An. stephensi",
+      study = "miazgowicz"
+    ) %>%
+    ungroup() %>%
+    select(-died) %>%
+    rename(
+      replicate = Block,
+      temperature = Treatment,
+      time = Day
+    )
+  
+}
+
+# load temperature-dependent data from Shapiro et al. 2017
+# https://doi.org/10.1371/journal.pbio.2003489 from the data uploaded to data
+# dryad https://doi.org/10.5061/dryad.74839
+load_shapiro_data <- function() {
+  
+  shapiro <- read_csv("data/life_history_params/adult_survival/shapiro/temp.surv.csv",
+                      col_types = cols(
+                        id = col_double(),
+                        expt = col_double(),
+                        temp = col_double(),
+                        cup = col_double(),
+                        day = col_double(),
+                        status = col_double()
+                      )) %>%
+    # combine experimental blocks and cups into a single replicate effect
+    mutate(
+      replicate = paste(expt, cup, sep = "_"),
+      replicate = match(replicate, unique(replicate))
+    ) %>%
+    rename(
+      temperature = temp,
+      time = day
+    )
+  
+  # each row is an individual mosquito, day is the last day in the timeseries
+  # for that mosquito, and status is whether they were alive (ie. when the
+  # experiment stopped) or dead (ie. day is the day they died) then. We need to
+  # get the number alive at the start of each day (per experiment/cup and temp),
+  # and the number dying on that day
+  
+  # get all possible days, for all experiments
+  all_combos <- expand_grid(
+    replicate = unique(shapiro$replicate),
+    temperature = unique(shapiro$temperature),
+    time = seq(min(shapiro$time), max(shapiro$time))
+  )
+  
+  # get the number of mosquitos at the start of each of these experiments
+  starting <- shapiro %>%
+    group_by(
+      replicate,
+      temperature
+    ) %>%
+    summarise(
+      starting = n(),
+      .groups = "drop"
+    )
+  
+  # and the numbers dying on each day that one or more died on
+  died <- shapiro %>%
+    group_by(
+      replicate,
+      temperature,
+      time
+    ) %>%
+    summarise(
+      died = sum(status == 1),
+      .groups = "drop"
+    ) 
+  
+  # pull these all together, and add on other info
+  all_combos %>%
+    left_join(
+      starting,
+      by = join_by(replicate, temperature)
+    ) %>%
+    left_join(
+      died,
+      by = join_by(replicate, temperature, time)
+    ) %>%
+    mutate(
+      died = replace_na(died, 0)
+    ) %>%
+    arrange(
+      replicate,
+      temperature,
+      time
+    ) %>%
+    group_by(
+      replicate,
+      temperature
+    ) %>%
+    mutate(
+      died_cumulative = cumsum(died)
+    ) %>%
+    ungroup() %>%
+    mutate(
+      alive = starting - died_cumulative
+    ) %>%
+    select(
+      -starting,
+      -died
+    ) %>%
+    mutate(
+      sex = "F",
+      species = "An. stephensi",
+      humidity = 80,
+      study = "shapiro"
+    )
+    
+}
+
 
 
 # load the required R packages
@@ -827,6 +1140,322 @@ ggsave("figures/aquatic_survival_stephensi.png",
        width = 5,
        height = 5)
 
+# model adult survival as a function of air temperature and humidity. Reanalyse
+# Bayoh data on an gambiae, include other data on longer-lived An gambiae, and
+# jointly model An stephensi (with temperature effects, but fixed humidity.)
+
+
+# fit temperature- and humidity-dependent survival curve
+
+# load Mohammed Bayoh's thesis data for An gambiae with temperature and humidity
+# treatments, 16CSS strain originally colonised from Lagos, Nigeria, in 1974
+bayoh_Ag <- load_bayoh_data()
+
+# load Krajacich et al 2020's data on inducing aestivation in An gambiae (a
+# younger colony than Bayoh; coluzzi from Mali in 2012 and ss from Cameroon in
+# 2008) strangely, the species is not distinguished in the results or data
+# https://doi.org/10.1186/s13071-020-04276-y
+krajacich_Ag <- load_krajacich_data()
+
+# Villena has two datasets for temperature dependent An stephensi adult
+# mortality rates, Shapiro et al. 2017
+# https://doi.org/10.1371/journal.pbio.2003489 and Miazgowicz et al. 2020
+# https://doi.org/10.1098/rspb.2020.1093 (listed as Kerri 2019, presumably
+# referring to the preprint). The only adult survival data is from Bayoh's
+# thesis, which we already have.
+# from the 'long-standing colony' at Walt Reed.
+shapiro_As <- load_shapiro_data()
+
+# load data from Miazgowicz et al. 2020 https://doi.org/10.1098/rspb.2020.1093,
+# from Data dryad: https://doi.org/10.5061/dryad.8cz8w9gmd from a 'long-standing
+# colony (~40 years) of An. stephensi mosquitoes from Pennsylvania State
+# University which were originally obtained from the Walter Reed Army Institute
+# of Research'
+miazgowicz_As <- load_miazgowicz_data()
+
+# fit a proportional hazards model on probability of *mortality* via cloglog 
+# trick: offset handles the cumulative effect, first term is baseline hazard, 
+# temperature and humidity have a multiplicative effect, fixed intercepts for 
+# each sex group
+
+adult_survival_data <- bind_rows(
+  bayoh_Ag,
+  krajacich_Ag,
+  miazgowicz_As,
+  shapiro_As
+) %>%
+  mutate(
+    species = factor(species),
+    study = factor(study),
+    # Define a preferred study for each species, to account for study
+    # differences, without confounding the species differences. For An gambiae,
+    # the preferred study is the one with the youngest colony. For An. stephensi
+    # they are from the same colony (v. old), so just picking one at random
+    non_preferred = case_when(
+      study %in% c("krajacich", "miazgowicz") ~ 0,
+      .default = 1
+    ),
+    id = row_number()
+  ) %>%
+  # treat each observation period as an independent observation, so account for
+  # the number starting each time period (alive_start) and compute the number
+  # that died (died_end) and number that lived (alive_end) in that period
+  group_by(temperature, humidity, sex, replicate, species, study) %>%
+  mutate(
+    alive_start = c(0, alive[-n()]),
+    died_end = c(0, diff(died_cumulative)),
+    alive_end = alive_start - died_end,
+    # how long was this survival interval?
+    duration = c(0, diff(time)),
+    .after = alive
+  ) %>%
+  ungroup() %>%
+  # use the survival interval times the number of trials as the offset (NB approximation to the betabinomial)
+  mutate(
+    offset = log(duration * alive_start)
+  ) %>%
+  # remove rows for time zero starting values (anywhere there weren't mossies
+  # alive at the start)
+  filter(
+    alive_start != 0,
+    sex == "F"
+  )
+
+# we could model this as binomial with cloglog (survival model with proportional
+# hazards), but there is additional dispersion even after fitting smooth terms,
+# so we need extra observation-level variance. Betabinomial is not possible in.
+# mgcv, so we use a negative binomial approximation to the BB
+
+adult_mortality_model <- mgcv::gam(died_end ~ 1 +
+                                     # intercept for species, and for the preferred study type (to
+                                     # account for differences in colony age)
+                                     species +
+                                     # nonlinear interaction between them
+                                     s(temperature, log(humidity), k = 15) +
+                                     # linear effect of mosquito age (duration of exposure)
+                                     time * study,
+                                   # penalise all effects to zero (lasso-like regulariser)
+                                   select = TRUE,
+                                   data = adult_survival_data,
+                                   # apply extra smoothing, to incorporate a
+                                   # priori information that this should be a
+                                   # smooth function
+                                   gamma = 10,
+                                   # fit with REML
+                                   method = "REML",
+                                   # account for the differing durations of the observation periods
+                                   # using a cloglog and offset (proportional hazards model with
+                                   # double censoring)
+                                   offset = adult_survival_data$offset,
+                                   family = mgcv::nb(link = "log")
+)
+summary(adult_mortality_model)
+gratia::draw(adult_mortality_model)
+mgcv::gam.check(adult_mortality_model)
+
+# use randomised quantile residuals to check model fit
+
+library(DHARMa)
+sims <- simulateResiduals(adult_mortality_model)
+testOutliers(sims, type = "bootstrap")
+plot(sims)
+
+# mostly it's fine, but there are still some outliers
+
+# get target-normally-distributed residuals, to explore lack of fit
+resid_checks <- adult_survival_data %>%
+  select(
+    time,
+    temperature,
+    humidity,
+    species,
+    study
+  ) %>%
+  mutate(
+    resid = qnorm(sims$scaledResiduals)
+  )
+
+# this should look uniform
+hist(pnorm(resid_checks$resid))
+
+# what proportion of datapoints are outliers?
+round(100 * mean(!is.finite(resid_checks$resid)), 1)
+
+# plot where these fall in time vs temp
+ggplot(resid_checks,
+       aes(y = jitter(time),
+           x = jitter(temperature),
+           color = is.finite(resid),
+           size = !is.finite(resid),
+           group = study)) +
+  geom_point(
+    alpha = 0.3,
+    pch = 16
+  ) +
+  facet_grid(~ study)
+
+
+# This is in a lab; field mortality is much greater. Charlwood (1997) estimates
+# daily adult survival for An gambiae at around 0.83 in Ifakara with temperature
+# = 25.6, humidity = 80%. Compute a correction on the hazard scale for the
+# lab-based survival estimates.
+mortality_prob_to_log_hazard <- function(mortality_prob) log(-log(1 - mortality_prob))
+# log_hazard_to_mortality_prob <- function(log_hazard) 1 - exp(-exp(log_hazard))
+
+df_ifakara <- data.frame(temperature = 25.6,
+                         humidity = 80,
+                         sex = "F",
+                         time = sqrt(.Machine$double.eps),
+                         species = "An. gambiae",
+                         replicate = 1,
+                         id = 1,
+                         non_preferred = 0,
+                         # freshest An. gambiae population we have data for
+                         study = "krajacich",
+                         off = 0)
+
+lab_daily_log_hazard <- predict(adult_mortality_model, df_ifakara, type = "link")[1]
+field_daily_log_hazard <- mortality_prob_to_log_hazard(1 - 0.83)
+log_hazard_correction <- field_daily_log_hazard - lab_daily_log_hazard
+
+# construct function of temperature and humidity
+ds_temp_humid_raw <- function(temperature, humidity, species, model, log_hazard_correction) {
+  epsilon <- sqrt(.Machine$double.eps)
+  df <- data.frame(
+    temperature = pmax(epsilon, temperature),
+    humidity = pmax(epsilon, humidity),
+    time = epsilon,
+    sex = "F",
+    id = 1,
+    species = species,
+    non_preferred = 0,
+    study = ifelse(species == "An. gambiae",
+                   "krajacich",
+                   "miazgowicz"),
+    replicate = 1
+  )
+  lab_daily_log_hazard <- predict(model, df, type = "link")
+  field_daily_log_hazard <- lab_daily_log_hazard + log_hazard_correction
+  field_mortality_prob <- 1 - exp(-exp(field_daily_log_hazard))
+  1 - field_mortality_prob
+}
+
+ds_temp_humid <- function(temperature, humidity, species) {
+  ds_temp_humid_raw(temperature, humidity, species,
+                    model = adult_mortality_model,
+                    log_hazard_correction = log_hazard_correction)
+}
+
+ds_temp_humid_Ag <- function(temperature, humidity) {
+  ds_temp_humid(temperature, humidity, species = "An. gambiae")
+}
+
+ds_temp_humid_As <- function(temperature, humidity) {
+  ds_temp_humid(temperature, humidity, species = "An. stephensi")
+}
+
+# plot the survival model
+
+# contour bin width and colours
+bw <- 0.05
+max_grey <- 0.6
+cols <- grey(1 - max_grey * seq(0, 1, by = bw))
+cols[1] <- "transparent"
+
+density_plotting <- expand_grid(
+  temperature = seq(5, 40, length.out = 100),
+  humidity = seq(0, 100, length.out = 100),
+  species = c("An. stephensi", "An. gambiae")
+) %>%
+  mutate(
+    prob = case_when(
+      species == "An. stephensi" ~ ds_temp_humid_As(temperature, humidity),
+      species == "An. gambiae" ~ ds_temp_humid_Ag(temperature, humidity),
+      .default = NA
+    ),
+    prob_7d = prob ^ 7
+  )
+
+
+# summarise survivial data to overplot
+survival_summary <- adult_survival_data %>%
+  group_by(
+    species,
+    temperature,
+    humidity,
+    replicate,
+    sex
+  ) %>%
+  ungroup() %>%
+  group_by(
+    species,
+    temperature,
+    humidity
+  ) %>%
+  summarise(
+    alive = sum(alive_end),
+    total = sum(alive_start),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    survival = alive / total,
+    survival_7d = survival ^ 7,
+    survival_7d_cut = cut(survival_7d, seq(0, 1, by = bw))
+  )
+
+  
+ggplot(density_plotting,
+       aes(y = humidity,
+           x = temperature)) +
+  facet_wrap(~species) +
+  geom_contour_filled(
+    aes(z = prob_7d),
+    binwidth = bw
+  ) +
+  geom_contour(
+    aes(z = prob_7d),
+    binwidth = bw,
+    colour = grey(0.2),
+    linewidth = 0.5
+  ) +
+  geom_text_contour(
+    aes(z = prob_7d),
+    binwidth = bw,
+    nudge_y = -5,
+    skip = 0
+  ) +
+  geom_point(
+    data = survival_summary,
+    mapping = aes(
+      colour = survival_7d_cut
+    ),
+    shape = 16,
+    size = 4
+  ) +
+  geom_point(
+    data = survival_summary,
+    shape = 21,
+    colour = grey(0.4),
+    size = 4
+  ) +
+  scale_fill_discrete(type = cols) +
+  scale_color_discrete(type = cols) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  ggtitle("Adult survival vs air temperature and humidity",
+          "Probability of surviving 1 week") +
+  ylab("Humidity(%)") +
+  xlab("Temperature (C)")
+
+ggsave("figures/lifehistory_adult_survival.png",
+       bg = "white",
+       width = 7,
+       height = 5)
+
+# need to export the survival model as before
+
+
+
 
 # now we need to save these neatly to be loaded reused later, getting around all
 # the awkward lexical scoping stuff. Use dehydrate_lifehistory_function() and
@@ -847,6 +1476,9 @@ dehydrate_lifehistory_function(pea_temp_Ag, file.path(storage_path, "pea_temp_Ag
 
 # DAS ~ temp + density
 dehydrate_lifehistory_function(das_temp_dens_As, file.path(storage_path, "das_temp_dens_As.RDS"))
+
+# AS ~ temp + humidity + species
+dehydrate_lifehistory_function(ds_temp_humid, file.path(storage_path, "ds_temp_humid.RDS"))
 
 # use the following function to rehydrate them, e.g.:
 #   storage_path <- "data/life_history_params/dehydrated"

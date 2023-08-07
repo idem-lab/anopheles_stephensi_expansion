@@ -188,46 +188,93 @@ title(main = paste("Microclimate conditions in", placename,
 
 # port the microclimate conditions into the adult survival model
 
-# load the mgcv survival model 
-library(mgcv)
-survival_model <- readRDS("data/survival_model/survival_model.RDS")
+# load the life history trait functions
 
-# function to compute adult survival at temperature and humidity combinations
-survival <- function (temperature = 20,
-                      humidity = 100,
-                      use_wild_correction = TRUE,
-                      period_days = 1) {
-  
-  # construct dataframe for prediction
-  df_pred <- data.frame(temperature = temperature,
-                        humidity = humidity,
-                        sex = "F",
-                        off = 0)
-  
-  # predict cumulative survival probability after one day
-  survival <- 1 - predict(survival_model, df_pred, type = "response")
-  
-  if (use_wild_correction) {
-    wild_correction <- attr(survival_model, "wild_correction")
-    survival <- survival * wild_correction
-  }
-  
-  # correct to given time period over which to calculate survival
-  survival <- survival ^ period_days
-  
-  survival
-  
+
+# Build a simple two stage model (aquatic stages and adults), with effects of
+# density dependence (daily aquatic survival; DAS), water temperature (DAS and
+# aquatic development rate; MDR), air temperature (adult survival; DS, and egg
+# laying; EFD), and humidity (DS). Construct as a dynamic matrix.
+
+# We have the adult humidity and survival combinations from Bayoh, and we can
+# get the other parameters from a combination of studies used in Villena et al.
+# and Evans et al. See estimate_lifehistory_functions.R
+
+# reload these as functions from saved objects
+rehydrate_lifehistory_function <- function(path_to_object) {
+  object <- readRDS(path_to_object)
+  do.call(`function`,
+          list(object$arguments,
+               body(object$dummy_function)))
 }
 
+storage_path <- "data/life_history_params/dehydrated"
 
-# get hourly survival probabilities
-survival_microclimate_all <- survival(temperature = microclimate_temperature_all,
-                                      humidity = microclimate_humidity_all,
-                                      period_days = 1 / 24)
+# daily adult survival for either An. gambiae or An. stephensi
+ds_temp_humid <- rehydrate_lifehistory_function(
+  file.path(storage_path, "ds_temp_humid.RDS")
+) 
 
-survival_outside_all <- survival(temperature = outside_temperature_all,
-                                 humidity = outside_humidity_all,
-                                 period_days = 1 / 24)
+# An. stephensi only function
+ds_function <- function(temperature, humidity) {
+  ds_temp_humid(temperature, humidity, species = "An. stephensi")
+}
+
+# development rate of aquatic stages as a function of water temperature
+mdr_function <- rehydrate_lifehistory_function(
+  file.path(storage_path, "mdr_temp_As.RDS")
+)
+
+# daily survival probability of aquatic stages as a function of water
+# temperature and density of aquatic stages
+das_function <- rehydrate_lifehistory_function(
+  file.path(storage_path, "das_temp_dens_As.RDS")
+)
+
+# daily egg laying as a function of air temperature
+efd_function <- rehydrate_lifehistory_function(
+  file.path(storage_path, "efd_temp_As.RDS")
+)
+
+# 
+# 
+# 
+# survival_model <- readRDS("data/survival_model/survival_model.RDS")
+# 
+# # function to compute adult survival at temperature and humidity combinations
+# survival <- function (temperature = 20,
+#                       humidity = 100,
+#                       use_wild_correction = TRUE,
+#                       period_days = 1) {
+#   
+#   # construct dataframe for prediction
+#   df_pred <- data.frame(temperature = temperature,
+#                         humidity = humidity,
+#                         sex = "F",
+#                         off = 0)
+#   
+#   # predict cumulative survival probability after one day
+#   survival <- 1 - predict(survival_model, df_pred, type = "response")
+#   
+#   if (use_wild_correction) {
+#     wild_correction <- attr(survival_model, "wild_correction")
+#     survival <- survival * wild_correction
+#   }
+#   
+#   # correct to given time period over which to calculate survival
+#   survival <- survival ^ period_days
+#   
+#   survival
+#   
+# }
+
+# get hourly adult survival probabilities
+period_days <- 1 / 24
+survival_microclimate_all <- ds_function(temperature = microclimate_temperature_all,
+                                         humidity = microclimate_humidity_all) ^ period_days
+
+survival_outside_all <- ds_function(temperature = outside_temperature_all,
+                                    humidity = outside_humidity_all) ^ period_days
 
 survival_microclimate <- survival_microclimate_all[keep]
 survival_outside <- survival_outside_all[keep]
@@ -241,26 +288,8 @@ plot(survival_outside ~ dates,
      ylim = range(c(survival_microclimate, survival_outside)),
      xlim = date_range)
 lines(survival_microclimate ~ dates,
-      col = "dark green", lwd = 2)
-
-# function for EIP of pathogens
-eip_function <- function(temp, pathogen = c("falciparum", "vivax"), period_days = 1 / 12) {
-  pathogen <- match.arg(pathogen)
-  # use degree day model as in Gething:
-  # https://doi.org/10.1186/1756-3305-4-92
-  phi <- switch(pathogen,
-                vivax = 105,
-                falciparum = 111)
-  temp_min <- switch(pathogen,
-                  vivax = 14.5,
-                  falciparum = 16)
-  
-  degree_days <- pmax(0, temp - temp_min) * period_days
-
-  # scale it 1 is full development
-  degree_days / phi
-}
-
+      col = "dark green",
+      lwd = 2)
 
 # given a latitude and a longitude, model the temperuture and humidity profile
 # at an hourly resolution over an average year, both inside a hypothetical
@@ -309,42 +338,11 @@ model_conditions <- function(loc) {
   
 }
 
-# Build a simple two stage model (aquatic stages and adults), with effects of
-# density dependence (daily aquatic survival; DAS), water temperature (DAS and
-# aquatic development rate; MDR), air temperature (adult survival; DS, and egg
-# laying; EFD), and humidity (DS). Construct as a dynamic matrix.
-
-# We have the adult humidity and survival combinations from Bayoh, and we can
-# get the other parameters from a combination of studies used in Villena et al.
-# and Evans et al. See estimate_lifehistory_functions.R
-
-# reload these as functions from saved objects
-rehydrate_lifehistory_function <- function(path_to_object) {
-  object <- readRDS(path_to_object)
-  do.call(`function`,
-          list(object$arguments,
-               body(object$dummy_function)))
-}
-
-storage_path <- "data/life_history_params/dehydrated"
-# development rate of aquatic stages as a function of water temperature
-mdr_function <- rehydrate_lifehistory_function(
-  file.path(storage_path, "mdr_temp_As.RDS")
-)
-# daily survival probability of aquatic stages as a function of water
-# temperature and density of aquatic stages
-das_function <- rehydrate_lifehistory_function(
-  file.path(storage_path, "das_temp_dens_As.RDS")
-)
-# daily egg laying as a function of air temperature
-efd_function <- rehydrate_lifehistory_function(
-  file.path(storage_path, "efd_temp_As.RDS")
-)
 
 # # probability of an adult surviving two weeks at different humidities
-# surv_100rh <- function(temp) survival(temperature = temp, humidity = rep(100, length(temp))) ^ 14
-# surv_50rh <- function(temp) survival(temperature = temp, humidity = rep(50, length(temp))) ^ 14
-# surv_25rh <- function(temp) survival(temperature = temp, humidity = rep(25, length(temp))) ^ 14
+# surv_100rh <- function(temp) ds_function(temperature = temp, humidity = rep(100, length(temp))) ^ 14
+# surv_50rh <- function(temp) ds_function(temperature = temp, humidity = rep(50, length(temp))) ^ 14
+# surv_25rh <- function(temp) ds_function(temperature = temp, humidity = rep(25, length(temp))) ^ 14
 # 
 # plot(surv_100rh,
 #      xlim = c(-20, 100))
@@ -356,7 +354,7 @@ efd_function <- rehydrate_lifehistory_function(
 #      xlim = c(-20, 100),
 #      lty = 3,
 #      add = TRUE)
-# min(survival(temperature = seq(-20, 100, length.out = 100),
+# min(ds_function(temperature = seq(-20, 100, length.out = 100),
 #                  humidity = sample(seq(0, 100, length.out = 100))))
 
 # das_function is a function of temperature and density (larvae per 250ml
@@ -375,14 +373,14 @@ mdr <- mdr_function(conditions$habitat$water_temperature) ^ scaling
 das <- das_function(conditions$habitat$water_temperature, density = 0) ^ scaling
 das64 <- das_function(conditions$habitat$water_temperature, density = 64) ^ scaling
 efd <- efd_function(conditions$habitat$air_temperature) ^ scaling
-surv <- survival(temperature = conditions$habitat$air_temperature,
-                 humidity = conditions$habitat$humidity) ^ scaling
+ds <- ds_function(temperature = conditions$habitat$air_temperature,
+                  humidity = conditions$habitat$humidity) ^ scaling
 
 
 par(mfrow = c(2, 2),
     oma = rep(0, 4),
     mar = c(3, 3, 4, 1) + 0.1)
-plot(surv ~ conditions$day,
+plot(ds ~ conditions$day,
      type = "l",
      xlim = c(10, 14),
      xlab = "", ylab = "",
@@ -411,7 +409,7 @@ plot(efd ~ conditions$day,
 # write a function to construct the matrix appropriately, given the larval
 # density in the previous timestep
 
-create_matrix <- function(state, water_temperature, mdr, efd, surv, timestep = 1 / 24) {
+create_matrix <- function(state, water_temperature, mdr, efd, ds, timestep = 1 / 24) {
   
   # given the previous state, and temperature, compute daily das
   das <- das_function(temperature = water_temperature,
@@ -420,20 +418,20 @@ create_matrix <- function(state, water_temperature, mdr, efd, surv, timestep = 1
   # convert all of these to the required timestep (survivals cumuatlive, rates
   # linear)
   das_step <- das ^ timestep
-  surv_step <- surv ^ timestep
+  ds_step <- ds ^ timestep
   mdr_step <- mdr * timestep
   efd_step <- efd * timestep
   
   # construct the matrix
   #     L                A
-  # L   das * (1-mdr)    surv * efd
-  # A   das * mdr        surv
+  # L   das * (1-mdr)    ds * efd
+  # A   das * mdr        ds
   matrix(
     c(
       das_step * (1 - mdr_step), # top left
       das_step * (mdr_step), # bottom left
-      surv_step * efd_step, # top right
-      surv_step # bottom right
+      ds_step * efd_step, # top right
+      ds_step # bottom right
     ),
     nrow = 2,
     ncol = 2
@@ -442,26 +440,26 @@ create_matrix <- function(state, water_temperature, mdr, efd, surv, timestep = 1
 }
 
 # iterate the state of the model
-iterate_state <- function(state, t, water_temperature, mdr, efd, surv) {
+iterate_state <- function(state, t, water_temperature, mdr, efd, ds) {
   mat <- create_matrix(state = state,
                        water_temperature = water_temperature[t],
-                       mdr = mdr[t], efd = efd[t], surv = surv[t])  
+                       mdr = mdr[t], efd = efd[t], ds = ds[t])  
   mat %*% state
 }
-# simulate for a full timeseries, with a year of burnin
 
-simulate_population <- function(conditions, initial_state = rep(100, 2)) {
+# simulate for a full timeseries, with optional multiple years of burnin
+simulate_population <- function(conditions, initial_state = rep(100, 2), burnin_years = 1) {
  
   # add whole year of burnin
   n_times <- length(conditions$water_temperature)
-  index <- rep(seq_len(n_times), 2)
+  index <- rep(seq_len(n_times), burnin_years + 1)
   
   # pull out timeseries needed for simulating
   water_temperature <- conditions$water_temperature[index]
   mdr <- mdr_function(conditions$water_temperature[index])
   efd <- efd_function(conditions$air_temperature[index])
-  surv <- survival(temperature = conditions$air_temperature[index],
-                   humidity = conditions$humidity[index])
+  ds <- ds_function(temperature = conditions$air_temperature[index],
+                    humidity = conditions$humidity[index])
   
   # simulate the population
   n <- length(index)
@@ -472,11 +470,11 @@ simulate_population <- function(conditions, initial_state = rep(100, 2)) {
   for (t in seq_len(n)) {
     state <- iterate_state(state, t = t,
                            water_temperature = water_temperature,
-                           mdr = mdr, efd = efd, surv = surv)
+                           mdr = mdr, efd = efd, ds = ds)
     states[t, ] <- state
   }
 
-  # keep only the second year (post burnin)  
+  # keep only the final year (post burnin)  
   keep_index <- tail(seq_along(index), n_times)
   states[keep_index, ]  
 }
@@ -498,14 +496,14 @@ plot(states[, 2] ~ conditions$day,
      ylim = c(0, max(states[, 2])),
      xlab = "day")
 
-summarise_dynamics <- function(states, surface_area_m2 = 1) {
+summarise_dynamics <- function(states, surface_area_m2 = 10000) {
   
-  # given a habitat surace area in square metres, get the population multiplier to
-  # scale up the experimental density dependence to get the absolute population
-  # sizes for the given pool of water. The experiments (Evans et al.) has 250ml
-  # water in a 'quart size mason jar', which is rather quaint, but not
-  # particularly specific. I'm assuming it's a Ball brand 'regular mouth canning
-  # jar'. According to masonjarlifestyle.com, that has a 2 3/8" internal
+  # given a habitat surace area in square metres, get the population multiplier
+  # to scale up the experimental density dependence to get the absolute
+  # population sizes for the given pool of water. The experiment used (Evans et
+  # al.) has 250ml water in a 'quart size mason jar', which is rather quaint,
+  # but not particularly specific. I'm assuming it's a Ball brand 'regular mouth
+  # canning jar'. According to masonjarlifestyle.com, that has a 2 3/8" internal
   # diameter. In real money, that's 6.0325cm, for an area of 28.5814687428cm^2,
   # or 0.00285814687m2.
   multiplier <- surface_area_m2 / 0.00285814687
@@ -833,7 +831,7 @@ coords <- xyFromCell(region_raster_mask, cells(region_raster_mask))
 
 # aggregate it 2x to get a lower resolution set of coordinates for second pass -
 # original resolution is ~18.5km at the equator
-region_raster_mask_agg <- aggregate(region_raster_mask, 2)
+region_raster_mask_agg <- aggregate(region_raster_mask, 4)
 coords_agg <- xyFromCell(region_raster_mask_agg, cells(region_raster_mask_agg))
 nrow(coords_agg)
 
@@ -850,13 +848,29 @@ coords_list <- coords_agg[valid_cells, ] %>%
   as_tibble() %>%
   split(seq_len(nrow(.)))
 
-# run suitability for all pixels, sequentially as nichemapr seems to bug out in multisession
-library(future.apply)
-plan(sequential)
+# run suitability for all pixels
 
+# for some reason, nichemapr seems to error with any future plan except
+# sequential, so go old school and use snowfall!
+library(snowfall)
+sfInit(parallel = TRUE, cpus = 8)
+sfLibrary(NicheMapR)
+sfLibrary(tidyverse)
+sfExport(list = list("model_conditions",
+                     "simulate_population",
+                     "mdr_function",
+                     "das_function",
+                     "efd_function",
+                     "ds_function",
+                     "ds_temp_humid",
+                     "iterate_state",
+                     "create_matrix",
+                     "summarise_dynamics"))
 time_agg <- system.time(
-  results_list <- future_lapply(coords_list, calculate_stephensi_suitability)
+  results_list <- sfLapply(coords_list, calculate_stephensi_suitability)
 )
+
+
 
 # # site long 35.3333333333333 lat 32
 # 
@@ -869,8 +883,10 @@ time_agg <- system.time(
 # nrow(coords_agg)
 
 # time in minutes - 41 for aggregated
+# in parallel, 191 mins @ agg 4
 time_agg["elapsed"] / 60
 
+sfStop()
 
 # add on the coordinates
 index_list <- lapply(seq_along(coords_list), function(x) tibble(cell_index = x))
@@ -930,6 +946,11 @@ ggplot() +
   theme_minimal() +
   ggtitle("Predicted number of months per year suitable for\nAn. stephensi persistence in microclimate")
 
+ggsave("figures/mechanistic_persistence.png",
+       bg = "white",
+       width = 9,
+       height = 7)
+
 ggplot() +
   geom_spatraster(
     data = annual_relative_abundance_agg,
@@ -947,6 +968,10 @@ ggplot() +
   theme_minimal() +
   ggtitle("Predicted climatic suitability for An. stephensi\ninside a microclimate")
 
+ggsave("figures/mechanistic_suitability.png",
+       bg = "white",
+       width = 9,
+       height = 7)
 
 # note: we could consider switching to the terraclimate inputs and run over
 # actual time? It might not be much slower to run for a decade, given overheads
