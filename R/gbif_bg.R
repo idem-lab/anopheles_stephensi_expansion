@@ -149,28 +149,42 @@ bg_countries_2 <- countrycode::countrycode(
 
 
 
-gbif_data  <- occ_download(
-  pred('taxonKey', 1),
-  pred_in('basisOfRecord', 
-          c("MACHINE_OBSERVATION", "HUMAN_OBSERVATION")),
-  pred_in('country', bg_countries_2),
-  pred('hasGeospatialIssue', "FALSE"),
-  pred('occurrenceStatus', "PRESENT"),
-  pred("hasCoordinate", TRUE),
-  pred_lt("coordinateUncertaintyInMeters",1000),
-  pred_gte('year', 2010),
-  format = "SIMPLE_CSV"
-)
+# set up github credentials
+# https://docs.ropensci.org/rgbif/articles/gbif_credentials.html
+# usethis::edit_r_environ()
+# specify and save the below into the .Renviron file
+# GBIF_USER="jwaller"
+# GBIF_PWD="safe_fake_password_123"
+# GBIF_EMAIL="jwaller@gbif.org"
 
-gbif_data
+
+# download animalia for focal region
+# only needs to be run once, after this can just download per 
+# code below with occ_download_get
+
+# gbif_data  <- occ_download(
+#   pred('taxonKey', 1),
+#   pred_in('basisOfRecord', 
+#           c("MACHINE_OBSERVATION", "HUMAN_OBSERVATION")),
+#   pred_in('country', bg_countries_2),
+#   pred('hasGeospatialIssue', "FALSE"),
+#   pred('occurrenceStatus', "PRESENT"),
+#   pred("hasCoordinate", TRUE),
+#   pred_lt("coordinateUncertaintyInMeters",1000),
+#   pred_gte('year', 2010),
+#   format = "SIMPLE_CSV"
+# )
+# 
+# gbif_data
+
+gbif_citation("0013949-230530130749713")
 
 gbif_bg_raw <- occ_download_get("0013949-230530130749713") %>%
   occ_download_import() %>% 
   write_csv(
     sprintf(
       "data/tabular/gbif_region_animalia_%s.csv",
-      today() %>%
-        format("%Y%m%d")
+      "20230607"
     )
   )
 
