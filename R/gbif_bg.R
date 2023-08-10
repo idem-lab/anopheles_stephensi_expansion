@@ -199,3 +199,5 @@ saveRDS(
   bg_points,
   "output/bg_points.RDS"
 )
+
+# need to mask out to land only
