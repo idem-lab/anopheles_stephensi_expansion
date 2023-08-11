@@ -1,6 +1,8 @@
 library(dplyr)
 library(rgbif)
 library(readr)
+library(terra)
+library(countrycode)
 
 # based on bounding box code, which borrows from the nichemapR code,
 
@@ -69,14 +71,14 @@ emro_countries <- function () {
     "AFG",
     "BHR",
     "DJI",
-    "EGY",
+    #"EGY",
     "IRN",
     "IRQ",
     "JOR",
     "KWT",
     "LBN",
-    "LBY",
-    "MAR",
+    #"LBY",
+    #"MAR",
     "PSE",
     "OMN",
     "PAK",
@@ -85,7 +87,7 @@ emro_countries <- function () {
     "SOM",
     "SDN",
     "SYR",
-    "TUN",
+    #"TUN",
     "ARE",
     "YEM"
   )
@@ -98,12 +100,14 @@ searo_countries <- function() {
     "PRK",
     "IND",
     "IDN",
+    "LAO",
     "MDV",
     "MMR",
     "NPL",
     "LKA",
     "THA",
-    "TLS"
+    "TLS",
+    "VNM"
   )
 }
 
@@ -130,8 +134,8 @@ countries_exclude <- function() {
   c(
     "PRK",
     "IDN",
-    "TLS",
-    "THA"
+    "TLS"#,
+    #"THA"
   )
 }
 
@@ -141,12 +145,21 @@ bg_countries <- function() {
 }
 
 # switch to 2-character codes for gbif
-bg_countries_2 <- countrycode::countrycode(
+bg_countries_2 <- countrycode(
   bg_countries(),
   origin = "iso3c",
   destination = "iso2c"
 )
 
+tibble(
+  country = countrycode(
+    bg_countries(),
+    origin = "iso3c",
+    destination = "country.name"
+  ),
+  iso2 = bg_countries_2,
+  iso3 = bg_countries()
+) %>% print(n = 100)
 
 
 # set up github credentials
@@ -159,12 +172,12 @@ bg_countries_2 <- countrycode::countrycode(
 
 
 # download animalia for focal region
-# only needs to be run once, after this can just download per 
+# only needs to be run once, after this can just download per
 # code below with occ_download_get
 
 # gbif_data  <- occ_download(
 #   pred('taxonKey', 1),
-#   pred_in('basisOfRecord', 
+#   pred_in('basisOfRecord',
 #           c("MACHINE_OBSERVATION", "HUMAN_OBSERVATION")),
 #   pred_in('country', bg_countries_2),
 #   pred('hasGeospatialIssue', "FALSE"),
@@ -176,28 +189,57 @@ bg_countries_2 <- countrycode::countrycode(
 # )
 # 
 # gbif_data
+# 
+# occ_download_wait('0001182-230810091245214', curlopts=list(http_version=2))
+# re curlopts seems to be necessary possibly only on mac:
+# https://github.com/ropensci/rgbif/issues/579
 
-gbif_citation("0013949-230530130749713")
 
-gbif_bg_raw <- occ_download_get("0013949-230530130749713") %>%
+gbif_citation("0001182-230810091245214")
+
+gbif_bg_raw <- occ_download_get('0001182-230810091245214') %>%
   occ_download_import() %>% 
   write_csv(
     sprintf(
       "data/tabular/gbif_region_animalia_%s.csv",
-      "20230607"
+      lubridate::today() %>%
+        format("%Y%m%d")
     )
   )
 
 
 bg_points <- gbif_bg_raw %>%
-  select(
+  dplyr::select(
     lat = decimalLatitude,
     lon = decimalLongitude
   )
 
 saveRDS(
   bg_points,
-  "output/bg_points.RDS"
+  sprintf(
+    "output/bg_points_%s.RDS",
+    lubridate::today() %>%
+      format("%Y%m%d")
+  )
 )
 
-# need to mask out to land only
+
+bg_points
+
+
+bg_vect <- vect(
+  x = bg_points,
+  crs = "+proj=longlat +datum=WGS84"
+)
+
+
+covmask <- rast(x = "output/rasters/covariates/covmask.grd")
+
+polmask <- as.polygons(cov_mask)
+
+bg_v <- mask(bg_vect, polmask)
+
+
+plot(covmask)
+points(bgv)
+
