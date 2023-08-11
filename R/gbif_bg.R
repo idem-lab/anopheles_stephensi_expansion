@@ -208,11 +208,29 @@ gbif_bg_raw <- occ_download_get('0001182-230810091245214') %>%
   )
 
 
-bg_points <- gbif_bg_raw %>%
+bg_points_raw <- gbif_bg_raw %>%
   dplyr::select(
     lat = decimalLatitude,
     lon = decimalLongitude
   )
+
+
+
+bg_vect <- vect(
+  x = bg_points_raw,
+  crs = "+proj=longlat +datum=WGS84"
+)
+
+
+covmask <- rast(x = "output/rasters/covariates/covmask.grd")
+
+polmask <- as.polygons(cov_mask)
+
+bg_points <- mask(bg_vect, polmask)
+
+
+plot(covmask)
+points(bg_v)
 
 saveRDS(
   bg_points,
@@ -223,23 +241,4 @@ saveRDS(
   )
 )
 
-
-bg_points
-
-
-bg_vect <- vect(
-  x = bg_points,
-  crs = "+proj=longlat +datum=WGS84"
-)
-
-
-covmask <- rast(x = "output/rasters/covariates/covmask.grd")
-
-polmask <- as.polygons(cov_mask)
-
-bg_v <- mask(bg_vect, polmask)
-
-
-plot(covmask)
-points(bgv)
 
