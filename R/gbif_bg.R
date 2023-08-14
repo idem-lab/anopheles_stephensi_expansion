@@ -209,6 +209,7 @@ gbif_bg_raw <- occ_download_get('0001182-230810091245214') %>%
 
 
 bg_points_raw <- gbif_bg_raw %>%
+  filter(species != "Anopheles stephensi") # don't appear to be any anyway
   dplyr::select(
     lat = decimalLatitude,
     lon = decimalLongitude
@@ -241,4 +242,35 @@ saveRDS(
   )
 )
 
+#### anopheles aedes culex
+
+
+
+gbif_moz  <- occ_download(
+  pred_or(
+    pred("taxonKey", 7924646), # Aedes
+    pred("taxonKey", 1650098), # Anopheles
+    pred("taxonKey", 1497010) # Culex
+  ),
+  pred_in('basisOfRecord',
+          c("MACHINE_OBSERVATION", "HUMAN_OBSERVATION")),
+  pred_in('country', bg_countries_2),
+  pred('hasGeospatialIssue', "FALSE"),
+  pred('occurrenceStatus', "PRESENT"),
+  pred("hasCoordinate", TRUE),
+  pred_lt("coordinateUncertaintyInMeters",1000),
+  pred_gte('year', 2010),
+  format = "SIMPLE_CSV"
+)
+
+gbif_moz
+
+occ_download_wait('0005930-230810091245214', curlopts=list(http_version=2))
+
+occ_download_get('0005930-230810091245214') %>%
+  occ_download_import()
+#
+# occ_download_wait('0001182-230810091245214', curlopts=list(http_version=2))
+# re curlopts seems to be necessary possibly only on mac:
+# https://github.com/ropensci/rgbif/issues/579
 
