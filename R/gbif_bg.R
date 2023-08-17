@@ -4,6 +4,8 @@ library(readr)
 library(terra)
 library(countrycode)
 
+source("R/functions/maskpointsdf.R")
+
 # based on bounding box code, which borrows from the nichemapR code,
 
 # africa countries with A stephensi older records
@@ -71,14 +73,14 @@ emro_countries <- function () {
     "AFG",
     "BHR",
     "DJI",
-    #"EGY",
+    "EGY",
     "IRN",
     "IRQ",
     "JOR",
     "KWT",
     "LBN",
-    #"LBY",
-    #"MAR",
+    "LBY",
+    "MAR",
     "PSE",
     "OMN",
     "PAK",
@@ -87,7 +89,7 @@ emro_countries <- function () {
     "SOM",
     "SDN",
     "SYR",
-    #"TUN",
+    "TUN",
     "ARE",
     "YEM"
   )
@@ -100,6 +102,7 @@ searo_countries <- function() {
     "PRK",
     "IND",
     "IDN",
+    "KHM",
     "LAO",
     "MDV",
     "MMR",
@@ -129,13 +132,16 @@ countries <- function() {
     )
   )
 }
-
+#exclude the following countries
 countries_exclude <- function() {
   c(
     "PRK",
     "IDN",
-    "TLS"#,
-    #"THA"
+    "TLS",
+    "EGY",
+    "LBY",
+    "MAR",
+    "TUN"
   )
 }
 
@@ -187,17 +193,16 @@ tibble(
 #   pred_gte('year', 2010),
 #   format = "SIMPLE_CSV"
 # )
-# 
 # gbif_data
 # 
-# occ_download_wait('0001182-230810091245214', curlopts=list(http_version=2))
+# occ_download_wait('0011641-230810091245214', curlopts=list(http_version=2))
 # re curlopts seems to be necessary possibly only on mac:
 # https://github.com/ropensci/rgbif/issues/579
 
 
-gbif_citation("0001182-230810091245214")
+gbif_citation("0011641-230810091245214")
 
-gbif_bg_raw <- occ_download_get('0001182-230810091245214') %>%
+bg_ani_gbif_raw <- occ_download_get('0011641-230810091245214') %>%
   occ_download_import() %>% 
   write_csv(
     sprintf(
@@ -208,42 +213,35 @@ gbif_bg_raw <- occ_download_get('0001182-230810091245214') %>%
   )
 
 
-bg_points_raw <- gbif_bg_raw %>%
-  filter(species != "Anopheles stephensi") # don't appear to be any anyway
+bg_ani_df_raw <- bg_ani_gbif_raw %>%
+  filter(species != "Anopheles stephensi") %>%
   dplyr::select(
-    lat = decimalLatitude,
-    lon = decimalLongitude
-  )
-
-
-
-bg_vect <- vect(
-  x = bg_points_raw,
-  crs = "+proj=longlat +datum=WGS84"
-)
+    lon = decimalLongitude,
+    lat = decimalLatitude
+  ) %>%
+    distinct
 
 
 covmask <- rast(x = "output/rasters/covariates/covmask.grd")
 
-polmask <- as.polygons(cov_mask)
-
-bg_points <- mask(bg_vect, polmask)
-
+bg_ani <- maskpointsdf(
+  df = bg_ani_df_raw,
+  msk = covmask
+)
 
 plot(covmask)
-points(bg_v)
+points(vect(bg_ani))
 
 saveRDS(
-  bg_points,
+  bg_ani,
   sprintf(
-    "output/bg_points_%s.RDS",
+    "output/tabular/bg_animalia_%s.RDS",
     lubridate::today() %>%
       format("%Y%m%d")
   )
 )
 
-#### anopheles aedes culex
-
+#### anopheles aedes culex only
 
 
 gbif_moz  <- occ_download(
@@ -252,25 +250,88 @@ gbif_moz  <- occ_download(
     pred("taxonKey", 1650098), # Anopheles
     pred("taxonKey", 1497010) # Culex
   ),
-  pred_in('basisOfRecord',
-          c("MACHINE_OBSERVATION", "HUMAN_OBSERVATION")),
+  #pred_in('basisOfRecord',
+  #        c("MACHINE_OBSERVATION", "HUMAN_OBSERVATION")),
   pred_in('country', bg_countries_2),
-  pred('hasGeospatialIssue', "FALSE"),
-  pred('occurrenceStatus', "PRESENT"),
+  #pred('hasGeospatialIssue', "FALSE"),
+  #pred('occurrenceStatus', "PRESENT"),
   pred("hasCoordinate", TRUE),
-  pred_lt("coordinateUncertaintyInMeters",1000),
-  pred_gte('year', 2010),
+  #pred_lt("coordinateUncertaintyInMeters",1000),
+  #pred_gte('year', 2000),
   format = "SIMPLE_CSV"
 )
 
 gbif_moz
 
-occ_download_wait('0005930-230810091245214', curlopts=list(http_version=2))
+occ_download_wait('0011856-230810091245214', curlopts=list(http_version=2))
 
-occ_download_get('0005930-230810091245214') %>%
-  occ_download_import()
-#
-# occ_download_wait('0001182-230810091245214', curlopts=list(http_version=2))
-# re curlopts seems to be necessary possibly only on mac:
-# https://github.com/ropensci/rgbif/issues/579
+bg_moz_gbif_raw <- occ_download_get('0011856-230810091245214') %>%
+  occ_download_import() %>% 
+  write_csv(
+    sprintf(
+      "data/tabular/gbif_region_moz_%s.csv",
+      lubridate::today() %>%
+        format("%Y%m%d")
+    )
+  )
 
+
+# subset to only results with low coordinate uncertainty (from all years)
+bg_moz_best_raw <- bg_moz_gbif_raw %>%
+  filter(coordinateUncertaintyInMeters < 1000) %>%
+  filter(species != "Anopheles stephensi") %>%
+  dplyr::select(
+    lat = decimalLatitude,
+    lon = decimalLongitude
+  ) %>%
+  distinct
+
+# subset to data post 2000 with either low coordinate uncertainty or missing
+# coordinate uncertainty (logic here is that most modern points will come from GPS
+# so should be tolerably accurate unless specified otherwise)
+bg_moz_many_raw <- bg_moz_gbif_raw %>%
+  filter(year >= 2000) %>%
+  filter(
+    is.na(coordinateUncertaintyInMeters)
+    | coordinateUncertaintyInMeters < 1000
+  ) %>%
+  filter(species != "Anopheles stephensi") %>%
+  dplyr::select(
+    lat = decimalLatitude,
+    lon = decimalLongitude
+  ) %>%
+  distinct
+
+bg_moz_best <- maskpointsdf(
+  df = bg_moz_best_raw,
+  msk = covmask
+)
+
+bg_moz_many <- maskpointsdf(
+  df = bg_moz_many_raw,
+  msk = covmask
+)
+
+plot(covmask)
+points(vect(bg_ani))
+points(vect(bg_moz_many), col = "grey60")
+points(vect(bg_moz_best), col = "orange")
+
+
+saveRDS(
+  bg_moz_best,
+  sprintf(
+    "output/tabular/bg_moz_best_%s.RDS",
+    lubridate::today() %>%
+      format("%Y%m%d")
+  )
+)
+
+saveRDS(
+  bg_moz_many,
+  sprintf(
+    "output/tabular/bg_moz_many_%s.RDS",
+    lubridate::today() %>%
+      format("%Y%m%d")
+  )
+)
