@@ -141,3 +141,7 @@ ggplot(
   #   colour = "orange",
   #   method = "loess"
   # )
+
+
+# tidy up data set, include trap type, explore all-zero instances
+
