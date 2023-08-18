@@ -644,7 +644,7 @@ calculate_stephensi_suitability <- function(loc) {
         # use pi for a permanent water body because it's the survace area (in m2) of a full, 1m deep
         # right-angle cone. But the value doesn't matter because we are only
         # after relative abundances
-        larval_habitat_area <- rep(pi, length(conditions$day))
+        larval_habitat_area <- rep(pi, length(microclimate_conditions$day))
       }
       
       # and run the simulation

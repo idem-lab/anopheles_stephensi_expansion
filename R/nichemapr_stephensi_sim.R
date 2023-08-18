@@ -11,41 +11,9 @@
 #   
 # -in a fresh R session, do: remotes::install_github("mrke/NicheMapR")
 
-# # Note it's possible to use ERA5 grided past weather data, but it's slooow
-# # for era5: install R package needed for linking to ERA5 data
-# remotes::install_github("dklinges9/mcera5")
-# # folder and file prefix with local ERA5 data extracted via the mcera5 package (no trailing forward slash)
-# era5_dir <- "~/build/era5_data"
-# era5_prefix <- "era5"
-# era5_dir_prefix <- file.path(era5_dir, era5_prefix)
-# if (!dir.exists(era5_dir)) {
-#   dir.create(era5_dir)
-# }
-# # set copernicus API key
-# uid <- "188032"
-# cds_api_key <- "these can be found at the bottom of the user profile"
-# # after registering here: https://cds.climate.copernicus.eu/user/register
-# ecmwfr::wf_set_key(user = uid, key = cds_api_key, service = "cds")
-# # you also need to accept the license terms here:
-# # https://cds.climate.copernicus.eu/cdsapp/#!/terms/licence-to-use-copernicus-products
-# # define a bounding box around the location for download
-# xmin <- 140
-# xmax <- 144
-# ymin <- -36
-# ymax <- -32
-# # and time period
-# st_time <- "2016-01-01"
-# en_time <- "2018-12-31"
-# # build a request
-# req <- build_era5_request(xmin = xmin,
-#                           xmax = xmax,
-#                           ymin = ymin,
-#                           ymax = ymax,
-#                           start_time = st_time,
-#                           end_time = en_time,
-#                           outfile_name = era5_prefix)
-# # download the data
-# request_era5(request = req, uid = uid, out_path = era5_dir)
+# reinstall NicheMapR from github after 18 August as Mike has fixed a bug when
+# running for dry places. To get the specific version I am using:
+# remotes::install_github("goldingn/NicheMapR@patch-rainy-NAs")
 
 library(NicheMapR)
 library(tidyverse)
@@ -393,11 +361,12 @@ suit %>%
     aes(
       x = month,
       y = relative_abundance,
-      group = location
+      group = larval_habitat,
+      colour = larval_habitat
     )
   ) +
   geom_line() +
-  facet_grid(larval_habitat ~ location) +
+  facet_grid(~ location) +
   theme_minimal()
 
 
@@ -600,55 +569,55 @@ ggsave("figures/mechanistic_suitability.png",
 # Increase the water volume size when determining the persistence suitability,
 # because populations will consist of multiple water tanks
 
-# try recreating the timeseries of monthly abundance in Whittaker et al. (2023)
-# https://doi.org/10.1073/pnas.2216142120
-jalalabad_loc <- rev(c(34.4198911, 70.4303445))
-lahore_loc <- rev(c(31.4831037, 74.0047326))
-djibouti_loc <- rev(c(11.5747928, 43.0778374))
-bandar_abbas_loc <- rev(c(27.1973499, 55.9655767))
-naypyidaw_loc <- rev(c(19.7470939, 95.9325102))
-
-afghanistan <- calculate_stephensi_suitability(jalalabad_loc) %>%
-  mutate(location = "Afghanistan")
-pakistan <- calculate_stephensi_suitability(lahore_loc) %>%
-  mutate(location = "Pakistan")
-djibouti <- calculate_stephensi_suitability(djibouti_loc) %>%
-  mutate(location = "Djibouti")
-iran <- calculate_stephensi_suitability(bandar_abbas_loc) %>%
-  mutate(location = "Iran")
-myanmar <- calculate_stephensi_suitability(naypyidaw_loc) %>%
-  mutate(location = "Myanmar")
-
-month_letter <- substr(month.abb, 1, 1)
-
-bind_rows(
-  afghanistan,
-  pakistan,
-  djibouti,
-  iran,
-  myanmar
-) %>%
-  filter(
-    microclimate == "habitat"
-  ) %>%
-  mutate(
-    relative_abundance = relative_abundance / max(relative_abundance),
-    month = factor(month.abb[month],
-                   levels = month.abb)
-  ) %>%
-  ggplot(
-    aes(
-      x = month,
-      y = relative_abundance,
-      group = location
-    )
-  ) +
-  scale_x_discrete(
-    labels = month_letter
-  ) +
-  geom_line() +
-  facet_grid(larval_habitat ~ location) +
-  theme_minimal()
+# # try recreating the timeseries of monthly abundance in Whittaker et al. (2023)
+# # https://doi.org/10.1073/pnas.2216142120
+# jalalabad_loc <- rev(c(34.4198911, 70.4303445))
+# lahore_loc <- rev(c(31.4831037, 74.0047326))
+# djibouti_loc <- rev(c(11.5747928, 43.0778374))
+# bandar_abbas_loc <- rev(c(27.1973499, 55.9655767))
+# naypyidaw_loc <- rev(c(19.7470939, 95.9325102))
+# 
+# afghanistan <- calculate_stephensi_suitability(jalalabad_loc) %>%
+#   mutate(location = "Afghanistan")
+# pakistan <- calculate_stephensi_suitability(lahore_loc) %>%
+#   mutate(location = "Pakistan")
+# djibouti <- calculate_stephensi_suitability(djibouti_loc) %>%
+#   mutate(location = "Djibouti")
+# iran <- calculate_stephensi_suitability(bandar_abbas_loc) %>%
+#   mutate(location = "Iran")
+# myanmar <- calculate_stephensi_suitability(naypyidaw_loc) %>%
+#   mutate(location = "Myanmar")
+# 
+# month_letter <- substr(month.abb, 1, 1)
+# 
+# bind_rows(
+#   afghanistan,
+#   pakistan,
+#   djibouti,
+#   iran,
+#   myanmar
+# ) %>%
+#   filter(
+#     microclimate == "habitat"
+#   ) %>%
+#   mutate(
+#     relative_abundance = relative_abundance / max(relative_abundance),
+#     month = factor(month.abb[month],
+#                    levels = month.abb)
+#   ) %>%
+#   ggplot(
+#     aes(
+#       x = month,
+#       y = relative_abundance,
+#       group = location
+#     )
+#   ) +
+#   scale_x_discrete(
+#     labels = month_letter
+#   ) +
+#   geom_line() +
+#   facet_grid(larval_habitat ~ location) +
+#   theme_minimal()
 
 # read in Whittaker et al paper information
 whittaker_papers <- read_csv("https://raw.githubusercontent.com/goldingn/stephenseasonality/main/data/systematic_review_results/extracted_entomological_data.csv") %>%
@@ -662,17 +631,12 @@ whittaker_papers <- read_csv("https://raw.githubusercontent.com/goldingn/stephen
          `Admin 2`) %>%
   distinct()
 
-whittaker_papers %>%
-  filter(`Admin 2` == "Kheda")
-
-whittaker_data %>% filter(admin2 == "Kheda")
-
 # read in Whittaker et al extracted data (from forked repo to safeguard against changes)
 whittaker_data <- get_rds("https://github.com/goldingn/stephenseasonality/raw/main/data/systematic_review_results/metadata_and_processed_unsmoothed_counts.rds")
 whittaker_admin1 <- get_rds("https://github.com/goldingn/stephenseasonality/raw/main/data/admin_units/simplified_admin1.rds")
 whittaker_admin2 <- get_rds("https://github.com/goldingn/stephenseasonality/raw/main/data/admin_units/simplified_admin2.rds")
 
-# punjab apdasrs twice here
+# punjab appears twice here
 admin1 <- whittaker_admin1 %>%
   select(
     country = NAME_0,
@@ -694,6 +658,61 @@ library(sf)
 
 whittaker_tidied <- whittaker_data %>%
   as_tibble() %>%
+  # only keep complete annual timeseries
+  rowwise() %>%
+  filter(
+    !any(across(
+      any_of(month.abb),
+      ~is.na(.x)
+    ))
+  ) %>%
+  # only keep timeseries with at least 100 mossies per year (to remove noise)
+  rowwise() %>%
+  mutate(
+    n_years = end - start + 1,
+    total = sum(across(any_of(month.abb)), na.rm = TRUE),
+    total_per_year = total / n_years,
+    .after = id
+  ) %>%
+  filter(
+    total >= 360
+  ) %>%
+  # keep only places with multiple years of data
+  rowwise() %>%
+  mutate(
+    years = list(seq(start, end))
+  ) %>%
+  group_by(country, admin1, admin2, city) %>%
+  mutate(
+    location_n_years = n_distinct(unlist(years)),
+    .after = id
+  ) %>%
+  ungroup() %>%
+  filter(
+    location_n_years > 3
+  ) %>%
+  # # collapse timeseries with multiple observations within the same place and years
+  # group_by(country, admin1, admin2, city, start, end) %>%
+  # summarise(
+  #   across(
+  #     any_of(month.abb),
+  #     ~sum(.x)
+  #   ),
+  #   id = id[1],
+  #   total = sum(total),
+  #   n_timeseries = n(),
+  #   .groups = "drop"
+  # ) %>%
+  # keep only timeseries in places with at least 2 timeseries
+  group_by(country, admin1, admin2, city) %>%
+  mutate(
+    timeseries = n()
+  ) %>%
+  ungroup() %>%
+  filter(
+    timeseries >= 2
+  ) %>%
+  # join on spatial data and find centroids
   left_join(
     admin1,
     by = c("country", "admin1")
@@ -709,8 +728,14 @@ whittaker_tidied <- whittaker_data %>%
     )
   ) %>%
   mutate(
-    coords = st_centroid(shape_admin),
-    placename = paste(admin2, admin1, country, sep = ", ")
+    coords = st_centroid(shape_admin)
+  ) %>%
+  mutate(
+    placename = case_when(
+      is.na(admin2) ~ paste(admin1, country, sep = ", "),
+      .default = paste(admin2, country, sep = ", ")
+    ),
+    .after = id
   ) %>%
   select(
     -shape_admin1,
@@ -718,24 +743,15 @@ whittaker_tidied <- whittaker_data %>%
     -shape_admin
   )
 
-# find the locations with the most years (at least 4), and the most mosquitoes
-# caught per year
+# unique locations with the most data
 best_data <- whittaker_tidied %>%
-  group_by(country, admin1, admin2, city, coords) %>%
+  group_by(placename, city, coords) %>%
   summarise(
-    total = sum(across(any_of(month.abb)), na.rm = TRUE),
-    years = n(),
-    year_average = total / years,
-    .groups = "drop") %>%
-  filter(
-    !is.na(admin2),
-    years >= 4
+    timeseries = timeseries[1],
+    mossies_per_timeseries = sum(total) / timeseries,
+    .groups = "drop"
   ) %>%
-  arrange(desc(year_average)) %>%
-  mutate(
-    placename = paste(admin2, admin1, country, sep = ", "),
-    .before = everything()
-  )
+  arrange(desc(mossies_per_timeseries))
 
 whittaker_subset <- whittaker_tidied %>%
   filter(placename %in% best_data$placename)
@@ -789,32 +805,6 @@ whittaker_obs_pred <- whittaker_subset %>%
   rename(
     relative_abundance_habitat_ephemeral = relative_abundance
   ) %>%
-  left_join(
-    filter(
-      whittaker_results,
-      microclimate == "outside",
-      larval_habitat == "permanent"
-    ) %>%
-      select(-microclimate,
-             -larval_habitat),
-    by = c("placename", month_id = "month")
-  ) %>%
-  rename(
-    relative_abundance_outside_permanent = relative_abundance
-  ) %>%
-  left_join(
-    filter(
-      whittaker_results,
-      microclimate == "outside",
-      larval_habitat == "ephemeral"
-    ) %>%
-      select(-microclimate,
-             -larval_habitat),
-    by = c("placename", month_id = "month")
-  ) %>%
-  rename(
-    relative_abundance_outside_ephemeral = relative_abundance
-  ) %>%
   group_by(id) %>%
   mutate(
     abundance = abundance / mean(abundance, na.rm = TRUE),
@@ -824,13 +814,50 @@ whittaker_obs_pred <- whittaker_subset %>%
     )
   ) %>%
   ungroup() %>%
-  # keep only the higher resolution
-  filter(!is.na(admin2))
+  pivot_longer(
+    cols = starts_with("relative_abundance"),
+    names_to = "Modelled",
+    names_prefix = "relative_abundance_habitat_",
+    values_to = "relative_abundance"
+  ) %>%
+  mutate(
+    Modelled = case_when(
+      Modelled == "permanent" ~ "Permanent water",
+      Modelled == "ephemeral" ~ "Ephemeral water"
+    ),
+    # make permanent a solid line, and ephemeral a dashed line
+    Modelled = factor(
+      Modelled,
+      levels = c("Permanent water",
+                 "Ephemeral water")
+    )
+  ) %>%
+  # tidy up the placename for Delhi
+  mutate(
+    placename = gsub("NCT of Delhi",
+                     "Delhi",
+                     placename)
+  ) %>%
+  # add the year range for the location
+  group_by(placename) %>%
+  mutate(
+    year_range = paste(min(start), max(end), sep = "-")
+  ) %>%
+  ungroup() %>%
+  mutate(
+    panel_name = sprintf("%s\n(%s)", placename, year_range)
+  ) %>%
+  # rename the urbanness
+  rename(
+    `Data` = city
+  )
+  
 
 ylims <- whittaker_obs_pred %>%
   select(
     abundance,
-    starts_with("relative_abundance")
+    relative_abundance,
+    # starts_with("relative_abundance_habitat")
   ) %>%
   as.matrix() %>%
   range(na.rm = TRUE)
@@ -844,123 +871,38 @@ plot <- whittaker_obs_pred %>%
       y = abundance,
       x = month,
       group = id,
-      colour = city
+      colour = Data
     )
   ) +
-  geom_line(
-  ) +
-  geom_point(
-  ) +
+  geom_line() +
+  geom_point() +
   geom_line(
     aes(
-      y = relative_abundance_habitat_permanent
+      y = relative_abundance,
+      group = Modelled,
+      linetype = Modelled
     ),
     colour = "black",
-    linetype = 1
+    linewidth = 1
   ) +
-  geom_line(
-    aes(
-      y = relative_abundance_habitat_ephemeral
-    ),
-    colour = "black",
-    linetype = 2
-  ) +
-  # geom_line(
-  #   aes(
-  #     y = relative_abundance_outside_permanent
-  #   ),
-  #   colour = "grey40",
-  #   linetype = 1
-  # ) +
-  # geom_line(
-  #   aes(
-  #     y = relative_abundance_outside_ephemeral
-  #   ),
-  #   colour = "grey40",
-  #   linetype = 2
-  # ) +
   coord_cartesian(
     ylim = ylims
   ) +
-  facet_wrap(~placename) +
-  theme_minimal()
+  facet_wrap(~panel_name) +
+  ylab("Relative abundance") +
+  xlab("") +
+  theme_minimal() +
+  ggtitle(
+    "Observed vs modelled abundance timeseries of adult abundance"
+  )
 
-# run two versions of the population model - one with permanent larval habitat, and one from
-# rain-fed larval habitat
-
-# 1. smoothly interpolate rainfall (from monthly data)
-# 2a. investigate using rainfall as linear in abundance 
-
-# 2b. implement Owen's puddle model for amount of larval habitat (either
-# microclimate or outdoor evaporation metrics)
-# 3. preprocess larval habitat area for both models
-# 4. run mosquito populations with both sorts of larval habitat (permanent or
-# ephemeral)
-
-
-placename <- "Salem, India"
-loc <- c(78.14653260343869, 11.66683664584138)
-
-# solve the cone model forward through time on an hourly timestep
-cond <- model_climatic_conditions(loc)
-conditions <- cond$outside
-# conditions$rainfall <- cond$ephemeral_larval_habitat
-# conditions$windspeed <- micro$shadmet[, "VLOC"]
-# conditions$altitude <- 0
-
-# The inflow multiplier is the ratio of rainfall catchment to the maximum larval
-# surface area. When it is large, the larval habitat is more likely to max-out.
-# This can potentially be tweaked to replicate the type of waater body (a
-# puddle, where there's likely to be no run-on that can't fill up) versus a
-# rainwater tank, where the additional catchment is likely to be significant
-
-larval_habitat_in <- simulate_ephemeral_habitat(conditions = cond$habitat,
-                                                inflow_multiplier = 6)
-larval_habitat_out <- simulate_ephemeral_habitat(conditions = cond$outside,
-                                                 inflow_multiplier = 6)
-
-cone_volume_to_surface(cone_depth_to_volume(0.1))
-
-par(mfrow = c(2, 1))
-plot(rainfall ~ day,
-     type = "l",
-     col = "blue",
-     data = cond$habitat)
-plot(larval_habitat_in ~ day,
-     ylim = range(c(larval_habitat_in, larval_habitat_out)),
-     type = "l",
-     col = "pink",
-     data = cond$habitat)
-lines(larval_habitat_out ~ day,
-     col = "purple",
-     data = cond$habitat)
-abline(h = c(larval_habitat_in[1],
-             larval_habitat_out[1]),
-       lty = 2)
-
-suit <- calculate_stephensi_suitability(loc)
-
-suit %>%
-  mutate(
-    month = factor(month, levels = unique(month))
-  ) %>%
-  ggplot(
-    aes(x = month,
-        y = relative_abundance,
-        group = larval_habitat,
-        colour = larval_habitat)
-  ) +
-  geom_line() +
-  facet_grid(~ microclimate) +
-  theme_minimal()
-
-# to do:
-
-# resolve Niamey error
-
-# tidy up plotting against Whittaker data
-
-# tweak model to fit Whittaker data
+ggsave(
+  filename = "figures/whittaker_comparison.png",
+  plot = plot,
+  width = 8,
+  height = 5,
+  bg = "white"
+)
 
 # tidy up visualisation of climate and lifehistory timeseries (ggplot code from
 # modelling conditions and larval habitat on different timeframes)
