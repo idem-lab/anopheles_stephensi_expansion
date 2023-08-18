@@ -49,6 +49,9 @@
 
 library(NicheMapR)
 library(tidyverse)
+library(mgcv)
+
+source("R/functions/micro_functions.R")
 
 # model temperature conditions inside a concrete water container (fully shaded,
 # permanent water, 'rock' surface), and compare them to an
@@ -68,12 +71,23 @@ wetness_perc <- 100
 # placename <- "Awash, Ethiopia"
 # loc <- c(40.142981, 8.9972474)
 
-placename <- "Niamey, Niger"
-loc <- c(2.0840132, 13.5127664)
+# placename <- "Niamey, Niger"
+# loc <- c(2.0840132, 13.5127664)
+
+# placename <- "Lahore, Pakistan"
+# loc <- c(74.0047326, 31.4831037)
 
 # placename <- "Bangui, CAR"
 # loc <- c(18.561247, 4.365849)
 
+# placename <- "Naypyidaw, Myanmar"
+# loc <- c(95.9325102, 19.7470939)
+
+# placename <- "Iran"
+# loc <- c(57.514125259779256, 28.264071517435397)
+
+placename <- "Salem, India"
+loc <- c(78.14653260343869, 11.66683664584138)
 
 micro <- micro_global(
   # place
@@ -84,11 +98,10 @@ micro <- micro_global(
   maxshade = shade_perc,
   soiltype = soiltype,
   PCTWET = wetness_perc,
-  runmoist = 0
-  # puddle characteristics
-  # rainmult = rainmult,
-  # maxpool = maxpool,
-  # evenrain = 1
+  runmoist = 0,
+  # make rainfall less mad
+  rainfrac = 0,
+  evenrain = 1
 )
 
 # plottable dates
@@ -200,14 +213,6 @@ title(main = paste("Microclimate conditions in", placename,
 # get the other parameters from a combination of studies used in Villena et al.
 # and Evans et al. See estimate_lifehistory_functions.R
 
-# reload these as functions from saved objects
-rehydrate_lifehistory_function <- function(path_to_object) {
-  object <- readRDS(path_to_object)
-  do.call(`function`,
-          list(object$arguments,
-               body(object$dummy_function)))
-}
-
 storage_path <- "data/life_history_params/dehydrated"
 
 # daily adult survival for either An. gambiae or An. stephensi
@@ -215,7 +220,7 @@ ds_temp_humid <- rehydrate_lifehistory_function(
   file.path(storage_path, "ds_temp_humid.RDS")
 ) 
 
-# An. stephensi only function
+# define An. stephensi only function
 ds_function <- function(temperature, humidity) {
   ds_temp_humid(temperature, humidity, species = "An. stephensi")
 }
@@ -235,38 +240,6 @@ das_function <- rehydrate_lifehistory_function(
 efd_function <- rehydrate_lifehistory_function(
   file.path(storage_path, "efd_temp_As.RDS")
 )
-
-# 
-# 
-# 
-# survival_model <- readRDS("data/survival_model/survival_model.RDS")
-# 
-# # function to compute adult survival at temperature and humidity combinations
-# survival <- function (temperature = 20,
-#                       humidity = 100,
-#                       use_wild_correction = TRUE,
-#                       period_days = 1) {
-#   
-#   # construct dataframe for prediction
-#   df_pred <- data.frame(temperature = temperature,
-#                         humidity = humidity,
-#                         sex = "F",
-#                         off = 0)
-#   
-#   # predict cumulative survival probability after one day
-#   survival <- 1 - predict(survival_model, df_pred, type = "response")
-#   
-#   if (use_wild_correction) {
-#     wild_correction <- attr(survival_model, "wild_correction")
-#     survival <- survival * wild_correction
-#   }
-#   
-#   # correct to given time period over which to calculate survival
-#   survival <- survival ^ period_days
-#   
-#   survival
-#   
-# }
 
 # get hourly adult survival probabilities
 period_days <- 1 / 24
@@ -291,71 +264,7 @@ lines(survival_microclimate ~ dates,
       col = "dark green",
       lwd = 2)
 
-# given a latitude and a longitude, model the temperuture and humidity profile
-# at an hourly resolution over an average year, both inside a hypothetical
-# concrete water tank, and out in the open air
-model_conditions <- function(loc) {
-  
-  # model temperature conditions inside a concrete water container (fully shaded,
-  # permanent water, 'rock' surface), and compare them to an
-  # aboveground, unshaded situation in the same location
-  
-  # height above the ground (metres) at which to calculate conditions, substrate
-  # type, and degree of shade in this place - set to 5cm, rock (ie.
-  # concrete) and 100% shade to represent a mosquito resting against side of a
-  # concrete water tank
-  height_m <- 0.05
-  soiltype <- 1
-  shade_perc <- 100
-  wetness_perc <- 100
-  
-  micro <- micro_global(
-    # place
-    loc = loc,
-    timeinterval = 365,
-    # microclimate characteristics
-    Usrhyt = height_m,
-    maxshade = shade_perc,
-    soiltype = soiltype,
-    PCTWET = wetness_perc,
-    runmoist = 0
-  )
-  
-  # all outputs, hourly resolution for a year
-  list(
-    day = seq(0, 365, by = 1/24)[-1],
-    habitat = list(
-      air_temperature = micro$shadmet[, "TALOC"],
-      humidity = micro$shadmet[, "RHLOC"],
-      water_temperature = micro$shadsoil[, "D0cm"]
-    ),
-    outside = list(
-      air_temperature = micro$metout[, "TAREF"],
-      humidity = micro$metout[, "RH"],
-      water_temperature = micro$soil[, "D0cm"]
-    )
-  )
-  
-}
 
-
-# # probability of an adult surviving two weeks at different humidities
-# surv_100rh <- function(temp) ds_function(temperature = temp, humidity = rep(100, length(temp))) ^ 14
-# surv_50rh <- function(temp) ds_function(temperature = temp, humidity = rep(50, length(temp))) ^ 14
-# surv_25rh <- function(temp) ds_function(temperature = temp, humidity = rep(25, length(temp))) ^ 14
-# 
-# plot(surv_100rh,
-#      xlim = c(-20, 100))
-# plot(surv_50rh,
-#      xlim = c(-20, 100),
-#      lty = 2,
-#      add = TRUE)
-# plot(surv_25rh,
-#      xlim = c(-20, 100),
-#      lty = 3,
-#      add = TRUE)
-# min(ds_function(temperature = seq(-20, 100, length.out = 100),
-#                  humidity = sample(seq(0, 100, length.out = 100))))
 
 # das_function is a function of temperature and density (larvae per 250ml
 # water), the others are functions of temperature
@@ -406,80 +315,6 @@ plot(efd ~ conditions$day,
 
 # put this into a population dynamic simulation model
 
-# write a function to construct the matrix appropriately, given the larval
-# density in the previous timestep
-
-create_matrix <- function(state, water_temperature, mdr, efd, ds, timestep = 1 / 24) {
-  
-  # given the previous state, and temperature, compute daily das
-  das <- das_function(temperature = water_temperature,
-                      density = state[1])
-  
-  # convert all of these to the required timestep (survivals cumuatlive, rates
-  # linear)
-  das_step <- das ^ timestep
-  ds_step <- ds ^ timestep
-  mdr_step <- mdr * timestep
-  efd_step <- efd * timestep
-  
-  # construct the matrix
-  #     L                A
-  # L   das * (1-mdr)    ds * efd
-  # A   das * mdr        ds
-  matrix(
-    c(
-      das_step * (1 - mdr_step), # top left
-      das_step * (mdr_step), # bottom left
-      ds_step * efd_step, # top right
-      ds_step # bottom right
-    ),
-    nrow = 2,
-    ncol = 2
-  )
-  
-}
-
-# iterate the state of the model
-iterate_state <- function(state, t, water_temperature, mdr, efd, ds) {
-  mat <- create_matrix(state = state,
-                       water_temperature = water_temperature[t],
-                       mdr = mdr[t], efd = efd[t], ds = ds[t])  
-  mat %*% state
-}
-
-# simulate for a full timeseries, with optional multiple years of burnin
-simulate_population <- function(conditions, initial_state = rep(100, 2), burnin_years = 1) {
- 
-  # add whole year of burnin
-  n_times <- length(conditions$water_temperature)
-  index <- rep(seq_len(n_times), burnin_years + 1)
-  
-  # pull out timeseries needed for simulating
-  water_temperature <- conditions$water_temperature[index]
-  mdr <- mdr_function(conditions$water_temperature[index])
-  efd <- efd_function(conditions$air_temperature[index])
-  ds <- ds_function(temperature = conditions$air_temperature[index],
-                    humidity = conditions$humidity[index])
-  
-  # simulate the population
-  n <- length(index)
-  states <- matrix(0, n, 2)
-  colnames(states) <- c("aquatic", "adult")
-  state <- initial_state
-  
-  for (t in seq_len(n)) {
-    state <- iterate_state(state, t = t,
-                           water_temperature = water_temperature,
-                           mdr = mdr, efd = efd, ds = ds)
-    states[t, ] <- state
-  }
-
-  # keep only the final year (post burnin)  
-  keep_index <- tail(seq_along(index), n_times)
-  states[keep_index, ]  
-}
-
-
 conditions <- model_conditions(loc)
 states <- simulate_population(conditions$habitat)
 
@@ -495,88 +330,6 @@ plot(states[, 2] ~ conditions$day,
      type = "l",
      ylim = c(0, max(states[, 2])),
      xlab = "day")
-
-summarise_dynamics <- function(states, surface_area_m2 = 10000) {
-  
-  # given a habitat surace area in square metres, get the population multiplier
-  # to scale up the experimental density dependence to get the absolute
-  # population sizes for the given pool of water. The experiment used (Evans et
-  # al.) has 250ml water in a 'quart size mason jar', which is rather quaint,
-  # but not particularly specific. I'm assuming it's a Ball brand 'regular mouth
-  # canning jar'. According to masonjarlifestyle.com, that has a 2 3/8" internal
-  # diameter. In real money, that's 6.0325cm, for an area of 28.5814687428cm^2,
-  # or 0.00285814687m2.
-  multiplier <- surface_area_m2 / 0.00285814687
-  states <- states * multiplier
-  
-  # summarise monthly
-  hours <- seq(1, 365 * 24)
-  timestamps <- as_datetime("2023-01-01 00:00:00") + lubridate::hours(hours)
-  months <- lubridate::month(timestamps)
-  
-  # based on this volume of water, we consider the species cannot persist if
-  # there is not at least 1 larva or 1 adult at all times, calculate this for
-  # each month (we can summarise annually later and see if all months are
-  # suitable)
-  min_larvae <- tapply(states[, 1], months, min)
-  min_adults <- tapply(states[, 2], months, min)
-  
-  # calculate the average number of adults present at any given
-  # time, in each month
-  adult_mean_abundance <- tapply(states[, 2], months, mean)
-
-  data.frame(
-    month = 1:12,
-    persistence = min_larvae > 0.5 | min_adults > 0.5,
-    relative_abundance = adult_mean_abundance
-  )  
-    
-}
-
-# need to summarise with e.g. year-round persistence and average number of
-# mosquitoes
-
-# we can calculate adult lifespan and combine with EIP to get an R0 for
-# different malarias?
-
-# speed this up? It's fairly fast already
-
-# wrap it up and summarise it at least
-
-
-# write a wrapper function to run this for a set of pixels, and then profile it
-# to make it run faster
-
-calculate_stephensi_suitability <- function(loc) {
-  
-  # model the microclimates
-  conditions <- model_conditions(loc)
-  
-  results <- list()
-  for (microclimate in c("habitat", "outside")) {
-      
-      # pull out the appropriate conditions and run the simulation
-      habitat_conditions <- conditions[[microclimate]]
-      population_states <- simulate_population(conditions = habitat_conditions)
-    
-      # summarise these, and enter into outputs
-      summary <- summarise_dynamics(population_states)
-      summary$microclimate <- microclimate
-      results[[microclimate]] <- summary
-      
-  }
-  
-  bind_rows(results$habitat,
-            results$outside)
-  
-}
-
-# almost all of the computation time is in the fortran microclimate model, so
-# not worth speeding up
-# library(profvis)
-# profvis(
-#   suit <- calculate_stephensi_suitability(loc)
-# )
 
 # placename <- "Awash, Ethiopia"
 # loc <- c(40.142981, 8.9972474)
@@ -609,7 +362,7 @@ suit %>%
         colour = microclimate)
   ) +
   geom_line() +
-  facet_wrap(~location) +
+  facet_grid(larval_habitat ~ location) +
   theme_minimal()
 
 
@@ -624,7 +377,7 @@ suit %>%
         colour = microclimate)
   ) +
   geom_line() +
-  facet_wrap(~location) +
+  facet_grid(larval_habitat ~ location) +
   theme_minimal()
 
 
@@ -643,7 +396,7 @@ suit %>%
     )
   ) +
   geom_line() +
-  facet_wrap(~location) +
+  facet_grid(larval_habitat ~ location) +
   theme_minimal()
 
 
@@ -663,143 +416,6 @@ load(gcfolder)
 nichemapr_climate_raster_mask <- terra::rast(paste0(folder, "/global_climate.nc"))[[1]] * 0 
 names(nichemapr_climate_raster_mask) <- "mask"
 # crop down to EMRO and AFRO regions
-
-africa_countries <- function () {
-  c(
-    "AGO",
-    "BDI",
-    "BEN",
-    "BFA",
-    "BWA",
-    "CAF",
-    "CIV",
-    "CMR",
-    "COD",
-    "COG",
-    "COM",
-    "CPV",
-    "DJI",
-    "DZA",
-    "EGY",
-    "ERI",
-    "ESH",
-    "ETH",
-    "GAB",
-    "GHA",
-    "GIN",
-    "GMB",
-    "GNB",
-    "GNQ",
-    "KEN",
-    "LBR",
-    "LBY",
-    "LSO",
-    "MAR",
-    "MDG",
-    "MLI",
-    "MOZ",
-    "MRT",
-    "MUS",
-    "MWI",
-    "NAM",
-    "NER",
-    "NGA",
-    "RWA",
-    "SDN",
-    "SEN",
-    "SLE",
-    "SOM",
-    "SSD",
-    "STP",
-    "SWZ",
-    "TCD",
-    "TGO",
-    "TUN",
-    "TZA",
-    "UGA",
-    "ZAF",
-    "ZMB",
-    "ZWE"
-  )
-}
-
-emro_countries <- function () {
-  c(
-    "AFG",
-    "BHR",
-    "DJI",
-    "EGY",
-    "IRN",
-    "IRQ",
-    "JOR",
-    "KWT",
-    "LBN",
-    "LBY",
-    "MAR",
-    "PSE",
-    "OMN",
-    "PAK",
-    "QAT",
-    "SAU",
-    "SOM",
-    "SDN",
-    "SYR",
-    "TUN",
-    "ARE",
-    "YEM"
-  )
-}
-
-searo_countries <- function() {
-  c(
-    "BGD",
-    "BTN",
-    "PRK",
-    "IND",
-    "IDN",
-    "MDV",
-    "MMR",
-    "NPL",
-    "LKA",
-    "THA",
-    "TLS"
-  )
-}
-
-euro_countries_subset <- function() {
-  c(
-    "ISR"
-  )
-}
-
-countries <- function() {
-  sort(
-    unique(
-      c(
-        africa_countries(),
-        emro_countries(),
-        searo_countries(),
-        euro_countries_subset()
-      )
-    )
-  )
-}
-
-countries_exclude <- function() {
-  c(
-    "PRK",
-    "IDN",
-    "TLS",
-    "THA"
-  )
-}
-
-
-region_countries <- function() {
-  setdiff(countries(), countries_exclude())
-}
-# # quick check
-# all(region_countries() %in% geodata::country_codes()$ISO3)
 
 # get a shapefile of the region of interest
 library(tidyverse)
@@ -977,18 +593,11 @@ ggsave("figures/mechanistic_suitability.png",
 # actual time? It might not be much slower to run for a decade, given overheads
 # in the microclimate model
 
-# need to check model with Mike Kearney, and consder doing an outside water
+# need to check model with Mike Kearney, and consider doing an outside water
 # source model too
 
-# update the adult survival model to include data from Krajacich et al. (2020)
-# https://doi.org/10.1186/s13071-020-04276-y, with an intercept term on study
-# and preferentially using that one as the colony is younger (less lab-adapted)
-# and survival is longer, more consistent with field observations of long-lived
-# An. gambiae s.l. (possibly aestivation)
-
 # Increase the water volume size when determining the persistence suitability,
-# because popultions will consist of multiple water tanks
-
+# because populations will consist of multiple water tanks
 
 # try recreating the timeseries of monthly abundance in Whittaker et al. (2023)
 # https://doi.org/10.1073/pnas.2216142120
@@ -1037,21 +646,27 @@ bind_rows(
     labels = month_letter
   ) +
   geom_line() +
-  facet_wrap(
-    ~location,
-    nrow = 1
-  ) +
+  facet_grid(larval_habitat ~ location) +
   theme_minimal()
 
+# read in Whittaker et al paper information
+whittaker_papers <- read_csv("https://raw.githubusercontent.com/goldingn/stephenseasonality/main/data/systematic_review_results/extracted_entomological_data.csv") %>%
+  select(`New ID`,
+         id = `Time Series ID`,
+         Year,
+         Author,
+         Title,
+         Country,
+         `Admin 1`,
+         `Admin 2`) %>%
+  distinct()
 
-get_rds <- function(url) {
-  tf <- tempfile()
-  download.file(url, tf)
-  readRDS(tf)
-}
+whittaker_papers %>%
+  filter(`Admin 2` == "Kheda")
 
+whittaker_data %>% filter(admin2 == "Kheda")
 
-# read in Whitakker et al extracted data (from forked repo to safeguard against changes)
+# read in Whittaker et al extracted data (from forked repo to safeguard against changes)
 whittaker_data <- get_rds("https://github.com/goldingn/stephenseasonality/raw/main/data/systematic_review_results/metadata_and_processed_unsmoothed_counts.rds")
 whittaker_admin1 <- get_rds("https://github.com/goldingn/stephenseasonality/raw/main/data/admin_units/simplified_admin1.rds")
 whittaker_admin2 <- get_rds("https://github.com/goldingn/stephenseasonality/raw/main/data/admin_units/simplified_admin2.rds")
@@ -1093,7 +708,8 @@ whittaker_tidied <- whittaker_data %>%
     )
   ) %>%
   mutate(
-    coords = st_centroid(shape_admin)
+    coords = st_centroid(shape_admin),
+    placename = paste(admin2, admin1, country, sep = ", ")
   ) %>%
   select(
     -shape_admin1,
@@ -1101,7 +717,29 @@ whittaker_tidied <- whittaker_data %>%
     -shape_admin
   )
 
-whittaker_coords_list <- whittaker_tidied %>%
+# find the locations with the most years (at least 4), and the most mosquitoes
+# caught per year
+best_data <- whittaker_tidied %>%
+  group_by(country, admin1, admin2, city, coords) %>%
+  summarise(
+    total = sum(across(any_of(month.abb)), na.rm = TRUE),
+    years = n(),
+    year_average = total / years,
+    .groups = "drop") %>%
+  filter(
+    !is.na(admin2),
+    years >= 4
+  ) %>%
+  arrange(desc(year_average)) %>%
+  mutate(
+    placename = paste(admin2, admin1, country, sep = ", "),
+    .before = everything()
+  )
+
+whittaker_subset <- whittaker_tidied %>%
+  filter(placename %in% best_data$placename)
+
+whittaker_coords_list <- best_data %>%
   pull(coords) %>%
   st_coordinates() %>%
   as_tibble() %>%
@@ -1109,15 +747,13 @@ whittaker_coords_list <- whittaker_tidied %>%
 
 whittaker_results_list <- lapply(whittaker_coords_list, calculate_stephensi_suitability)
 
-index_list <- lapply(whittaker_tidied$id, function(x) tibble(id = x))
+index_list <- lapply(best_data$placename, function(x) tibble(placename = x))
 
-whittaker_results <- mapply(bind_cols, whittaker_results_list, index_list, SIMPLIFY = FALSE) %>%
+whittaker_results <- mapply(bind_cols, index_list, whittaker_results_list, SIMPLIFY = FALSE) %>%
   bind_rows() %>%
   `rownames<-`(NULL)
 
-
-
-whittaker_obs_pred <- whittaker_tidied %>%
+whittaker_obs_pred <- whittaker_subset %>%
   pivot_longer(
     cols = month.abb,
     names_to = "month",
@@ -1129,76 +765,168 @@ whittaker_obs_pred <- whittaker_tidied %>%
   left_join(
     filter(
       whittaker_results,
-      microclimate == "habitat"
-    ),
-    by = c("id", month_id = "month")
+      microclimate == "habitat",
+      larval_habitat == "permanent"
+    ) %>%
+      select(-microclimate,
+             -larval_habitat),
+    by = c("placename", month_id = "month")
+  ) %>%
+  rename(
+    relative_abundance_habitat_permanent = relative_abundance
+  ) %>%
+  left_join(
+    filter(
+      whittaker_results,
+      microclimate == "habitat",
+      larval_habitat == "ephemeral"
+    ) %>%
+      select(-microclimate,
+             -larval_habitat),
+    by = c("placename", month_id = "month")
+  ) %>%
+  rename(
+    relative_abundance_habitat_ephemeral = relative_abundance
+  ) %>%
+  left_join(
+    filter(
+      whittaker_results,
+      microclimate == "outside",
+      larval_habitat == "permanent"
+    ) %>%
+      select(-microclimate,
+             -larval_habitat),
+    by = c("placename", month_id = "month")
+  ) %>%
+  rename(
+    relative_abundance_outside_permanent = relative_abundance
+  ) %>%
+  left_join(
+    filter(
+      whittaker_results,
+      microclimate == "outside",
+      larval_habitat == "ephemeral"
+    ) %>%
+      select(-microclimate,
+             -larval_habitat),
+    by = c("placename", month_id = "month")
+  ) %>%
+  rename(
+    relative_abundance_outside_ephemeral = relative_abundance
   ) %>%
   group_by(id) %>%
   mutate(
     abundance = abundance / mean(abundance, na.rm = TRUE),
-    relative_abundance = relative_abundance / mean(relative_abundance)
+    across(
+      starts_with("relative_abundance"),
+      ~ .x / mean(.x)
+    )
   ) %>%
+  ungroup() %>%
   # keep only the higher resolution
   filter(!is.na(admin2))
 
+ylims <- whittaker_obs_pred %>%
+  select(
+    abundance,
+    starts_with("relative_abundance")
+  ) %>%
+  as.matrix() %>%
+  range(na.rm = TRUE)
 
-plot_list <- list()
-for (country_name in unique(whittaker_obs_pred$country)) {
-  
-    obs_pred <- whittaker_obs_pred %>%
-      filter(country == country_name)
-    
-    ylims <- range(
-      c(obs_pred$abundance,
-        obs_pred$relative_abundance)
+plot <- whittaker_obs_pred %>%
+  mutate(
+    month = factor(month, levels = month.abb)
+  ) %>%
+  ggplot(
+    aes(
+      y = abundance,
+      x = month,
+      group = id,
+      colour = city
     )
-  
-    plot_list[[country_name]] <- obs_pred %>%
-      mutate(
-        month = factor(month, levels = month.abb)
-      ) %>%
-      ggplot(
-        aes(
-          y = abundance,
-          x = month,
-          group = id
-        )
-      ) +
-      geom_line(
-        color = grey(0.6)
-      ) +
-      geom_point(
-        color = grey(0.6)
-      ) +
-      geom_line(
-        aes(
-          y = relative_abundance
-        )
-      ) +
-      coord_cartesian(
-        ylim = ylims
-      ) +
-      facet_wrap(~admin2) +
-      theme_minimal() +
-      ggtitle(country_name)
-  
-}
+  ) +
+  geom_line(
+  ) +
+  geom_point(
+  ) +
+  geom_line(
+    aes(
+      y = relative_abundance_habitat_permanent
+    ),
+    colour = "black",
+    linetype = 1
+  ) +
+  geom_line(
+    aes(
+      y = relative_abundance_habitat_ephemeral
+    ),
+    colour = "black",
+    linetype = 2
+  ) +
+  # geom_line(
+  #   aes(
+  #     y = relative_abundance_outside_permanent
+  #   ),
+  #   colour = "grey40",
+  #   linetype = 1
+  # ) +
+  # geom_line(
+  #   aes(
+  #     y = relative_abundance_outside_ephemeral
+  #   ),
+  #   colour = "grey40",
+  #   linetype = 2
+  # ) +
+  coord_cartesian(
+    ylim = ylims
+  ) +
+  facet_wrap(~placename) +
+  theme_minimal()
 
-# some good fits (in humid areas?), some poor
-plot(plot_list$India)
+# run two versions of the population model - one with permanent larval habitat, and one from
+# rain-fed larval habitat
 
-# pretty noisy - lots of variation within admin2s
-plot(plot_list$Pakistan)
+# 1. smoothly interpolate rainfall (from monthly data)
+# 2a. investigate using rainfall as linear in abundance 
 
-# peak off by about a month - could be lifespan, as it takes longer to come back
-# up from off season?
-plot(plot_list$Afghanistan)
-
-# way off
-plot(plot_list$Iran)
-plot(plot_list$Myanmar)
-
-# data very noisy, one timeseries, not worth using?
-plot(plot_list$Djibouti)
+# 2b. implement Owen's puddle model for amount of larval habitat (either
+# microclimate or outdoor evaporation metrics)
+# 3. preprocess larval habitat area for both models
+# 4. run mosquito populations with both sorts of larval habitat (permanent or
+# ephemeral)
 
 
+
+# solve the cone model forward through time on an hourly timestep
+cond <- model_conditions(loc)
+conditions <- cond$outside
+conditions$rainfall <- cond$ephemeral_larval_habitat
+conditions$windspeed <- micro$shadmet[, "VLOC"]
+conditions$altitude <- 0
+
+larval_habitat <- simulate_ephemeral_habitat(conditions = conditions, burnin_years = 1)
+
+day <- rep(1:365, each = 24)
+day_habitat <- tapply(larval_habitat, day, mean)
+
+rel_larval_habitat <- larval_habitat
+# rel_larval_habitat <- rel_larval_habitat - min(rel_larval_habitat)
+rel_larval_habitat <- rel_larval_habitat / max(rel_larval_habitat)
+
+rel_rainfall <- conditions$rainfall
+# rel_rainfall <- rel_rainfall - min(rel_rainfall)
+rel_rainfall <- rel_rainfall / max(rel_rainfall)
+
+date <- as.Date("2023-01-01") + day
+par(mfrow = c(1, 1))
+plot(rel_larval_habitat ~ date, type = "l", ylim = c(0, 1))
+lines(rel_rainfall ~ date, lty = 2)
+
+
+
+# need to add the extra information - rainfall, wind speed (if outside), and altitude - into the conditions object
+
+# need to run this when running the conditions
+
+# need to plug this into the abundance timeseries
