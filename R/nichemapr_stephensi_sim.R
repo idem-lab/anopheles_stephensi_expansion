@@ -675,7 +675,9 @@ whittaker_tidied <- whittaker_data %>%
     .after = id
   ) %>%
   filter(
-    total >= 360
+    # want them to average at least 25 per month (it would ideally be more, but
+    # trying to keep some data in :/ )
+    total >= 300
   ) %>%
   # keep only places with multiple years of data
   rowwise() %>%
@@ -689,21 +691,10 @@ whittaker_tidied <- whittaker_data %>%
   ) %>%
   ungroup() %>%
   filter(
-    location_n_years > 3
+    location_n_years >= 3
   ) %>%
-  # # collapse timeseries with multiple observations within the same place and years
-  # group_by(country, admin1, admin2, city, start, end) %>%
-  # summarise(
-  #   across(
-  #     any_of(month.abb),
-  #     ~sum(.x)
-  #   ),
-  #   id = id[1],
-  #   total = sum(total),
-  #   n_timeseries = n(),
-  #   .groups = "drop"
-  # ) %>%
-  # keep only timeseries in places with at least 2 timeseries
+  # keep only timeseries in places with at least 2 timeseries (to understand
+  # variability)
   group_by(country, admin1, admin2, city) %>%
   mutate(
     timeseries = n()
@@ -845,22 +836,59 @@ whittaker_obs_pred <- whittaker_subset %>%
   ) %>%
   ungroup() %>%
   mutate(
-    panel_name = sprintf("%s\n(%s)", placename, year_range)
+    panel_name = sprintf("%s %s\n(%s)",
+                         city,
+                         placename, 
+                         year_range),
+    panel_name = factor(panel_name,
+                        levels = rev(unique(panel_name)))
   ) %>%
   # rename the urbanness
   rename(
     `Data` = city
   )
-  
 
-ylims <- whittaker_obs_pred %>%
-  select(
-    abundance,
-    relative_abundance,
-    # starts_with("relative_abundance_habitat")
+# get the peak rain periods to plot
+rain_months <- lapply(whittaker_coords_list, get_rain_months)
+index_list <- lapply(best_data$placename, function(x) tibble(placename = x))
+
+rain_months_plot <- mapply(bind_cols, index_list, rain_months, SIMPLIFY = FALSE) %>%
+  bind_rows() %>%
+  `rownames<-`(NULL) %>%
+  group_by(placename) %>%
+  mutate(
+    peak = rainfall == max(rainfall),
+    `Proportion rainfall` = rainfall / sum(rainfall),
+    near_peak = `Proportion rainfall` >= 0.1,
+    abundance = NA,
+    id = NA,
+    Data = NA,
+    placename = gsub("NCT of Delhi", "Delhi", placename)
   ) %>%
-  as.matrix() %>%
-  range(na.rm = TRUE)
+  left_join(
+    whittaker_obs_pred %>%
+      select(placename, panel_name) %>%
+      distinct(),
+    by = "placename"
+  )
+
+# ggplot() +
+#   geom_rect(
+#     data = rain_months_plot,
+#     aes(xmin = as.integer(month) - 0.5,
+#         xmax = as.integer(month) + 0.5,
+#         group = month,
+#         fill = rainfall),
+#     alpha = 0.25,
+#     ymin = 0,
+#     ymax = 1
+#   ) +
+#   scale_fill_gradient(low = "white",
+#                       high = "darkblue",
+#                       trans = "identity") +
+#   facet_wrap(~panel_name) +
+#   theme_minimal()
+
 
 plot <- whittaker_obs_pred %>%
   mutate(
@@ -874,8 +902,25 @@ plot <- whittaker_obs_pred %>%
       colour = Data
     )
   ) +
-  geom_line() +
-  geom_point() +
+  geom_vline(
+    data = rain_months_plot,
+    aes(
+      xintercept = month,
+      alpha = `Proportion rainfall`
+    ),
+    colour = "skyblue",
+    linewidth = 7
+  ) +
+  scale_alpha_continuous(labels = scales::percent,
+                         trans = "exp") +
+  geom_line(alpha = 0.3,
+            linewidth = 0.5) +
+  geom_point(
+    alpha = 0.3,
+    # pch = 15,
+    size = 2
+  ) +
+  scale_color_brewer(palette = "Set1") +
   geom_line(
     aes(
       y = relative_abundance,
@@ -885,24 +930,58 @@ plot <- whittaker_obs_pred %>%
     colour = "black",
     linewidth = 1
   ) +
-  coord_cartesian(
-    ylim = ylims
-  ) +
   facet_wrap(~panel_name) +
   ylab("Relative abundance") +
   xlab("") +
   theme_minimal() +
-  ggtitle(
-    "Observed vs modelled abundance timeseries of adult abundance"
+  theme(
+    axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank()
   )
+plot
+
 
 ggsave(
   filename = "figures/whittaker_comparison.png",
   plot = plot,
   width = 8,
-  height = 5,
+  height = 6,
   bg = "white"
 )
+
+# format the papers to include in the slide
+whittaker_papers %>%
+  filter(
+    id %in% unique(whittaker_obs_pred$id)
+  ) %>%
+  mutate(
+    Place = case_when(
+      is.na(`Admin 2`) ~ `Admin 1`,
+      .default = `Admin 2`
+    ),
+    Place = gsub("NCT of Delhi", "Delhi", Place),
+    Place = paste(Place, Country, sep = ", "),
+    Paper = sprintf("%s (%s)", Author, Year)
+  ) %>%
+  select(Place, Paper) %>%
+  distinct() %>%
+  group_by(Place) %>%
+  summarise(
+    text = sprintf("%s:\t%s",
+                   Place,
+                   paste(unlist(Paper), collapse = "; ")
+    ),
+    .groups = "drop"
+  ) %>%
+  distinct() %>%
+  pull(text) %>%
+  paste(collapse = "\n") %>%
+  write_file(file = "figures/whittaker_comparison_text.txt")
+   
+
 
 # tidy up visualisation of climate and lifehistory timeseries (ggplot code from
 # modelling conditions and larval habitat on different timeframes)

@@ -285,6 +285,37 @@ smooth_rainfall <- function(micro, day = NULL) {
   
 }
 
+# extract the modelled monthly rain totals for a location, for plotting
+get_rain_months <- function(coords) {
+  conditions <- model_climatic_conditions(coords)
+  tibble(
+    rainfall = conditions$habitat$rainfall,
+    date = as.Date("2023-01-01") + conditions$habitat$day
+  ) %>%
+    mutate(
+      # get the month
+      month = format(date, "%b"),
+    ) %>%
+    group_by(
+      month
+    ) %>%
+    summarise(
+      rainfall = sum(rainfall),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      # get month as a number from 1:12
+      month_id = match(month, month.abb),
+      # the number for the month after (wrapping around so 13 = 1)
+      month_end_id = month_id %% 12 + 1,
+      # get the month after
+      month_end = month.abb[month_end_id],
+      # make both factors
+      month = factor(month, levels = month.abb),
+      month_end = factor(month_end, levels = month.abb),
+    ) %>%
+    arrange(month)
+}
 
 ######
 # larval habitat modelling
