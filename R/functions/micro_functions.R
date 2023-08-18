@@ -233,7 +233,7 @@ model_climatic_conditions <- function(loc) {
       day = day,
       air_temperature = micro$metout[, "TAREF"],
       humidity = micro$metout[, "RH"],
-      water_temperature = micro$soil[, "D0cm"],
+      water_temperature = micro$soil[, "D5cm"],
       windspeed = micro$metout[, "VLOC"],
       rainfall = rainfall,
       altitude = micro$elev
