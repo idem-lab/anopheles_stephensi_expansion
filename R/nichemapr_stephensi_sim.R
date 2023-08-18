@@ -872,24 +872,6 @@ rain_months_plot <- mapply(bind_cols, index_list, rain_months, SIMPLIFY = FALSE)
     by = "placename"
   )
 
-# ggplot() +
-#   geom_rect(
-#     data = rain_months_plot,
-#     aes(xmin = as.integer(month) - 0.5,
-#         xmax = as.integer(month) + 0.5,
-#         group = month,
-#         fill = rainfall),
-#     alpha = 0.25,
-#     ymin = 0,
-#     ymax = 1
-#   ) +
-#   scale_fill_gradient(low = "white",
-#                       high = "darkblue",
-#                       trans = "identity") +
-#   facet_wrap(~panel_name) +
-#   theme_minimal()
-
-
 plot <- whittaker_obs_pred %>%
   mutate(
     month = factor(month, levels = month.abb)
@@ -941,8 +923,6 @@ plot <- whittaker_obs_pred %>%
     panel.grid.minor = element_blank(),
     panel.border = element_blank()
   )
-plot
-
 
 ggsave(
   filename = "figures/whittaker_comparison.png",
@@ -983,9 +963,179 @@ whittaker_papers %>%
    
 
 
+awash_loc <- c(40.142981, 8.9972474)
+addis_loc <- c(38.75960099237313, 8.982497645041477)
+# loc <- addis_loc
+loc <- addis_loc
+climate <- format_climatic_data(loc)
+
+variables_keep <- c("Air temperature (C)",
+                    "Water temperature (C)",
+                    "Humidity (%)",
+                    "Rainfall (mm)",
+                    "Pooled water\n(relative area)")
+variables_col <- RColorBrewer::brewer.pal(9, "Set1")[c(5, 8, 3, 2, 2)]
+
+
+# plot the microclimate hourly and annually
+plot_micro_hourly <- climate %>%
+  # plot only these variables, and in the right order
+  filter(
+    variable %in% variables_keep[c(1:3)]
+  ) %>%
+  # one day either side of presentation day, plus 3h time difference from GMT
+  filter(
+    date >= (as.Date("2023-09-19") - 1),
+    date <= (as.Date("2023-09-19") + 1),
+  ) %>%
+  mutate(
+    variable = factor(variable,
+                      levels = variables_keep)
+  ) %>%
+  # express rainfall as mm/day
+  mutate(
+    multiplier = case_when(
+      variable == "Rainfall (mm)" ~ 24,
+      .default = 1
+    ),
+    across(
+      starts_with("value"),
+      ~ .x * multiplier
+    ),
+    # convert to hours since start
+    hour = round((day - min(day)) * 24)
+  ) %>%
+  ggplot(
+    aes(
+      x = hour,
+      y = value,
+      linetype = which,
+      colour = variable,
+      fill = variable
+    )
+  ) +
+  geom_line(
+    linewidth = 1
+  ) +
+  scale_colour_manual(
+    labels = variables_keep,
+    values = variables_col,
+    guide = "none"
+  ) +
+  scale_fill_manual(
+    labels = variables_keep,
+    values = variables_col,
+    guide = "none"
+  ) +
+  facet_grid(rows = "variable", 
+    # ~ variable ~, ~  which,
+    scales = "free",
+    switch = "y"
+  ) +
+  ylab("") +
+  scale_x_continuous(
+    breaks = seq(0, 3 * 24, by = 6),
+    # label has hour of the day, and shift to Ethiopia time
+    labels = function(hours) {
+      (hours - 1) %% 24 + 1
+    }
+  ) +
+  scale_linetype(name = "") +
+  theme_minimal() +
+  theme(
+    strip.placement = "outside"
+  )
+
+plot_micro_year <- climate %>%
+  # plot only these variables, and in the right order
+  filter(
+    variable %in% variables_keep,
+    which == "microclimate"
+  ) %>%
+  mutate(
+    variable = factor(variable,
+                      levels = variables_keep)
+  ) %>%
+  # summarise by week for plotting
+  group_by(which, week, variable) %>%
+  summarise(
+    date = mean(date),
+    value_mean = mean(value),
+    value_upper = quantile(value, 0.9),
+    value_lower = quantile(value, 0.1),
+    .groups = "drop"
+  ) %>%
+  # express rainfall as mm/day
+  mutate(
+    multiplier = case_when(
+      variable == "Rainfall (mm)" ~ 24,
+      .default = 1
+    ),
+    across(
+      starts_with("value"),
+      ~ .x * multiplier
+    )
+  ) %>%
+  ggplot(
+    aes(
+      x = date,
+      y = value_mean,
+      ymax = value_upper,
+      ymin = value_lower,
+      # linetype = which,
+      colour = variable,
+      fill = variable
+    )
+  ) +
+  geom_ribbon(
+    alpha = 0.2,
+    linewidth = 0.1
+  ) +
+  geom_line(
+    linewidth = 1
+  ) +
+  scale_colour_manual(
+    labels = variables_keep,
+    values = variables_col,
+    guide = "none"
+  ) +
+  scale_fill_manual(
+    labels = variables_keep,
+    values = variables_col,
+    guide = "none"
+  ) +
+  scale_x_date(
+    date_labels = "%b"
+  ) +
+  facet_grid(
+    rows = "variable",
+    scales = "free",
+    switch = "y"
+  ) +
+  ylab("") +
+  xlab("") +
+  theme_minimal() +
+  theme(
+    strip.placement = "outside"
+  )
+
+ggsave("figures/microclimate_hourly.png",
+       plot_micro_hourly,
+       bg = "white",
+       height = 5,
+       width = 5)
+
+ggsave("figures/microclimate_year.png",
+       plot_micro_year,
+       bg = "white",
+       height = 5,
+       width = 5)
+
+
 # tidy up visualisation of climate and lifehistory timeseries (ggplot code from
 # modelling conditions and larval habitat on different timeframes)
 
 # clean up script
 
 # remake rasters including larval habitat
+

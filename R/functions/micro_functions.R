@@ -317,6 +317,72 @@ get_rain_months <- function(coords) {
     arrange(month)
 }
 
+
+
+format_climatic_data <- function(loc) {
+  
+  # run microclimate model
+  climate <- model_climatic_conditions(loc)
+  
+  # run larval habitat
+  ephemeral_habitat_microclimate <- simulate_ephemeral_habitat(
+    conditions = climate$habitat)
+  ephemeral_habitat_outside <- simulate_ephemeral_habitat(
+    conditions = climate$outside)
+  
+  # format as dataframe
+  micro <- climate$habitat %>%
+    as_tibble() %>%
+    mutate(
+      larval_habitat = simulate_ephemeral_habitat(.)
+    ) %>% 
+    mutate(
+      which = "microclimate",
+      .before = everything()
+    )
+  
+  outside <- climate$outside %>%
+    as_tibble() %>%
+    mutate(
+      larval_habitat = simulate_ephemeral_habitat(.)
+    ) %>% 
+    mutate(
+      which = "outside",
+      .before = everything()
+    )
+  
+  bind_rows(micro, outside) %>%
+    select(
+      -altitude,
+      -windspeed
+    ) %>%
+    mutate(
+      date = as.Date("2023-01-01") + day,
+      week = lubridate::week(date),
+    ) %>%
+    pivot_longer(
+      cols = c(
+        air_temperature,
+        water_temperature,
+        humidity,
+        rainfall,
+        larval_habitat
+      ),
+      names_to = "variable",
+      values_to = "value"
+    ) %>%
+    mutate(
+      variable = case_when(
+        variable == "air_temperature" ~ "Air temperature (C)",
+        variable == "water_temperature" ~ "Water temperature (C)",
+        variable == "humidity" ~ "Humidity (%)",
+        variable == "rainfall" ~ "Rainfall (mm)",
+        variable == "larval_habitat" ~ "Pooled water\n(relative area)"
+      )
+    )
+  
+}
+
 ######
 # larval habitat modelling
 
