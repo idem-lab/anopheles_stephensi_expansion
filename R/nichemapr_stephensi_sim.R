@@ -276,7 +276,7 @@ lines(survival_microclimate ~ dates,
 # so that they track with the air temperatures, but in our microclimate there
 # will be a buffering effect
 
-conditions <- model_conditions(loc)
+conditions <- model_climatic_conditions(loc)
 scaling <- 1/24
 mdr <- mdr_function(conditions$habitat$water_temperature) ^ scaling
 das <- das_function(conditions$habitat$water_temperature, density = 0) ^ scaling
@@ -315,7 +315,7 @@ plot(efd ~ conditions$day,
 
 # put this into a population dynamic simulation model
 
-conditions <- model_conditions(loc)
+conditions <- model_climatic_conditions(loc)
 states <- simulate_population(conditions$habitat)
 
 par(mfrow = c(2, 1),
@@ -472,7 +472,7 @@ library(snowfall)
 sfInit(parallel = TRUE, cpus = 8)
 sfLibrary(NicheMapR)
 sfLibrary(tidyverse)
-sfExport(list = list("model_conditions",
+sfExport(list = list("model_climatic_conditions",
                      "simulate_population",
                      "mdr_function",
                      "das_function",
@@ -897,36 +897,68 @@ plot <- whittaker_obs_pred %>%
 # ephemeral)
 
 
+placename <- "Salem, India"
+loc <- c(78.14653260343869, 11.66683664584138)
 
 # solve the cone model forward through time on an hourly timestep
-cond <- model_conditions(loc)
+cond <- model_climatic_conditions(loc)
 conditions <- cond$outside
-conditions$rainfall <- cond$ephemeral_larval_habitat
-conditions$windspeed <- micro$shadmet[, "VLOC"]
-conditions$altitude <- 0
+# conditions$rainfall <- cond$ephemeral_larval_habitat
+# conditions$windspeed <- micro$shadmet[, "VLOC"]
+# conditions$altitude <- 0
 
-larval_habitat <- simulate_ephemeral_habitat(conditions = conditions, burnin_years = 1)
+# The inflow multiplier is the ratio of rainfall catchment to the maximum larval
+# surface area. When it is large, the larval habitat is more likely to max-out.
+# This can potentially be tweaked to replicate the type of waater body (a
+# puddle, where there's likely to be no run-on that can't fill up) versus a
+# rainwater tank, where the additional catchment is likely to be significant
 
-day <- rep(1:365, each = 24)
-day_habitat <- tapply(larval_habitat, day, mean)
+larval_habitat_in <- simulate_ephemeral_habitat(conditions = cond$habitat,
+                                                inflow_multiplier = 6)
+larval_habitat_out <- simulate_ephemeral_habitat(conditions = cond$outside,
+                                                 inflow_multiplier = 6)
 
-rel_larval_habitat <- larval_habitat
-# rel_larval_habitat <- rel_larval_habitat - min(rel_larval_habitat)
-rel_larval_habitat <- rel_larval_habitat / max(rel_larval_habitat)
+cone_volume_to_surface(cone_depth_to_volume(0.1))
 
-rel_rainfall <- conditions$rainfall
-# rel_rainfall <- rel_rainfall - min(rel_rainfall)
-rel_rainfall <- rel_rainfall / max(rel_rainfall)
+par(mfrow = c(2, 1))
+plot(rainfall ~ day,
+     type = "l",
+     col = "blue",
+     data = cond$habitat)
+plot(larval_habitat_in ~ day,
+     ylim = range(c(larval_habitat_in, larval_habitat_out)),
+     type = "l",
+     col = "pink",
+     data = cond$habitat)
+lines(larval_habitat_out ~ day,
+     col = "purple",
+     data = cond$habitat)
+abline(h = c(larval_habitat_in[1],
+             larval_habitat_out[1]),
+       lty = 2)
 
-date <- as.Date("2023-01-01") + day
-par(mfrow = c(1, 1))
-plot(rel_larval_habitat ~ date, type = "l", ylim = c(0, 1))
-lines(rel_rainfall ~ date, lty = 2)
+suit <- calculate_stephensi_suitability(loc)
 
+suit %>%
+  mutate(
+    month = factor(month, levels = unique(month))
+  ) %>%
+  ggplot(
+    aes(x = month,
+        y = relative_abundance,
+        group = larval_habitat,
+        colour = larval_habitat)
+  ) +
+  geom_line() +
+  facet_grid(~ microclimate) +
+  theme_minimal()
 
+# to do:
 
-# need to add the extra information - rainfall, wind speed (if outside), and altitude - into the conditions object
+# tidy up plotting against Whittaker data
 
-# need to run this when running the conditions
+# tweak model to fit Whittaker data
 
-# need to plug this into the abundance timeseries
+# tidy up visualisation of climate and lifehistory timeseries
+
+# remake rasters to include larval habitat

@@ -168,7 +168,7 @@ rehydrate_lifehistory_function <- function(path_to_object) {
 # given a latitude and a longitude, model the temperuture and humidity profile
 # at an hourly resolution over an average year, both inside a hypothetical
 # concrete water tank, and out in the open air
-model_conditions <- function(loc) {
+model_climatic_conditions <- function(loc) {
   
   # model temperature conditions inside a concrete water container (fully shaded,
   # permanent water, 'rock' surface), and compare them to an
@@ -203,21 +203,26 @@ model_conditions <- function(loc) {
   # get smoothed rainfall data
   rainfall <- smooth_rainfall(micro, day)
   
-  # all outputs, hourly resolution for a year
+  # all outputs, hourly resolution for a year, with those relevant to either the
+  # microclimate or non-microclimate conditions
   list(
-    day = day,
-    # use rainfall directly as the larval habitat (in future, model this with
-    # accumulation and evaporation in each habitat)
-    ephemeral_larval_habitat = rainfall,
     habitat = list(
+      day = day,
       air_temperature = micro$shadmet[, "TALOC"],
       humidity = micro$shadmet[, "RHLOC"],
-      water_temperature = micro$shadsoil[, "D0cm"]
+      water_temperature = micro$shadsoil[, "D0cm"],
+      windspeed = micro$shadmet[, "VLOC"],
+      rainfall = rainfall,
+      altitude = micro$elev
     ),
     outside = list(
+      day = day,
       air_temperature = micro$metout[, "TAREF"],
       humidity = micro$metout[, "RH"],
-      water_temperature = micro$soil[, "D0cm"]
+      water_temperature = micro$soil[, "D0cm"],
+      windspeed = micro$metout[, "VLOC"],
+      rainfall = rainfall,
+      altitude = micro$elev
     )
   )
   
@@ -357,7 +362,8 @@ iterate_cone_volume <- function(water_volume,
                                 relative_humidity,
                                 altitude_m,
                                 windspeed_m_s,
-                                max_cone_depth = 1) {
+                                max_cone_depth = 1,
+                                inflow_multiplier = 1) {
   
   # define the cone - assume it cone has a maximum depth of 1m, so a maximum
   # volume of 1.05m3, beyond which it cannot get more full
@@ -385,8 +391,9 @@ iterate_cone_volume <- function(water_volume,
   # lose water, avoiding negatives
   water_volume <- pmax(0, water_volume - loss)
   
-  # 1000mm per metre, and catchment area is in m2, so convert to m3
-  gain_m_h <- rainfall_mm_h[t] / 1000
+  # 1000mm per metre, and catchment area is in m2, so convert to m3 (including
+  # multiplier on inflow)
+  gain_m_h <- inflow_multiplier * rainfall_mm_h[t] / 1000
   gain <- catchment_area * gain_m_h
   
   # gain water, capping maximum
@@ -400,7 +407,9 @@ iterate_cone_volume <- function(water_volume,
 # compute a timeseries of water surface area from a simple cone model
 simulate_ephemeral_habitat <- function(conditions,
                                        initial_volume = 0,
-                                       burnin_years = 1) {
+                                       burnin_years = 1,
+                                       max_cone_depth = 1,
+                                       inflow_multiplier = 1) {
   
   # add whole year of burnin
   n_times <- length(conditions$water_temperature)
@@ -427,7 +436,9 @@ simulate_ephemeral_habitat <- function(conditions,
                                   temperature_c = air_temperature,
                                   relative_humidity = relative_humidity,
                                   altitude_m = altitude,
-                                  windspeed_m_s = windspeed)
+                                  windspeed_m_s = windspeed,
+                                  max_cone_depth = max_cone_depth,
+                                  inflow_multiplier = inflow_multiplier)
     volumes[t] <- volume
   }
 
@@ -449,13 +460,20 @@ simulate_ephemeral_habitat <- function(conditions,
 # write a function to construct the matrix appropriately, given the larval
 # density in the previous timestep
 
-create_matrix <- function(state, water_temperature, mdr, efd, ds, timestep = 1 / 24) {
+create_matrix <- function(state,
+                          larval_habitat_area,
+                          water_temperature,
+                          mdr,
+                          efd,
+                          ds,
+                          timestep = 1 / 24) {
   
-  # given the previous state, and temperature, compute daily das
+  # given the previous state, surface area, and temperature, compute daily
+  # aquatic survival (density- and temperature-dependent)
   das <- das_function(temperature = water_temperature,
-                      density = state[1])
+                      density = state[1] / larval_habitat_area)
   
-  # convert all of these to the required timestep (survivals cumuatlive, rates
+  # convert all of these to the required timestep (survivals cumulative, rates
   # linear)
   das_step <- das ^ timestep
   ds_step <- ds ^ timestep
@@ -480,15 +498,28 @@ create_matrix <- function(state, water_temperature, mdr, efd, ds, timestep = 1 /
 }
 
 # iterate the state of the model
-iterate_state <- function(state, t, water_temperature, mdr, efd, ds) {
+iterate_state <- function(state,
+                          t,
+                          larval_habitat_area,
+                          water_temperature,
+                          mdr,
+                          efd,
+                          ds) {
   mat <- create_matrix(state = state,
+                       larval_habitat_area = larval_habitat_area[t],
                        water_temperature = water_temperature[t],
-                       mdr = mdr[t], efd = efd[t], ds = ds[t])  
+                       mdr = mdr[t],
+                       efd = efd[t],
+                       ds = ds[t])  
   mat %*% state
 }
 
 # simulate for a full timeseries, with optional multiple years of burnin
-simulate_population <- function(conditions, initial_state = rep(100, 2), burnin_years = 1) {
+simulate_population <- function(
+    conditions,
+    larval_habitat_area = rep(pi, length(conditions$day)),
+    initial_state = rep(100, 2),
+    burnin_years = 1) {
   
   # add whole year of burnin
   n_times <- length(conditions$water_temperature)
@@ -500,6 +531,7 @@ simulate_population <- function(conditions, initial_state = rep(100, 2), burnin_
   efd <- efd_function(conditions$air_temperature[index])
   ds <- ds_function(temperature = conditions$air_temperature[index],
                     humidity = conditions$humidity[index])
+  larval_habitat_area <- larval_habitat_area[index]
   
   # simulate the population
   n <- length(index)
@@ -508,9 +540,13 @@ simulate_population <- function(conditions, initial_state = rep(100, 2), burnin_
   state <- initial_state
   
   for (t in seq_len(n)) {
-    state <- iterate_state(state, t = t,
+    state <- iterate_state(state,
+                           t = t,
+                           larval_habitat_area = larval_habitat_area,
                            water_temperature = water_temperature,
-                           mdr = mdr, efd = efd, ds = ds)
+                           mdr = mdr,
+                           efd = efd,
+                           ds = ds)
     states[t, ] <- state
   }
   
@@ -560,27 +596,34 @@ summarise_dynamics <- function(states, surface_area_m2 = 10000) {
 calculate_stephensi_suitability <- function(loc) {
   
   # model the microclimates
-  conditions <- model_conditions(loc)
+  climatic_conditions <- model_climatic_conditions(loc)
   
   results <- list()
   for (microclimate in c("habitat", "outside")) {
     
-    # pull out the appropriate microclimatic conditions and run the simulation
-    habitat_conditions <- conditions[[microclimate]]
-    population_states <- simulate_population(conditions = habitat_conditions)
+    # pull out the appropriate microclimatic conditions
+    microclimate_conditions <- climatic_conditions[[microclimate]]
     
     for (larval_habitat in c("permanent", "ephemeral")) {
-      
+    
+      # compute the appropriate area of larval habitat  
       if (larval_habitat == "ephemeral") {
-
-        # horrible hack to force in larval habitat (ignores dynamic effects of
-        # larval habitat bottlenecks)
-        population_states <- sweep(population_states,
-                                           1,
-                                           conditions$ephemeral_larval_habitat,
-                                           FUN = "*")
         
+        # simulate ephemeral larval habitat under these local climatic conditions
+        larval_habitat_area <- simulate_ephemeral_habitat(
+          conditions = microclimate_conditions)
+
+      } else {
+        # use pi for a permanent water body because it's the survace area (in m2) of a full, 1m deep
+        # right-angle cone. But the value doesn't matter because we are only
+        # after relative abundances
+        larval_habitat_area <- rep(pi, length(conditions$day))
       }
+      
+      # and run the simulation
+      population_states <- simulate_population(
+        conditions = microclimate_conditions,
+        larval_habitat_area = larval_habitat_area)
       
       # summarise these, and enter into outputs
       summary <- summarise_dynamics(population_states)
