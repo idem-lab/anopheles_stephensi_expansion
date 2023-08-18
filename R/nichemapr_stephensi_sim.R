@@ -57,145 +57,145 @@ source("R/functions/micro_functions.R")
 # permanent water, 'rock' surface), and compare them to an
 # aboveground unshaded situation in the same location
 
-# height above the ground (metres) at which to calculate conditions, substrate
-# type, and degree of shade in this place - set to 5cm, rock (ie.
-# concrete) and 100% shade to represent a mosquito resting against side of a
-# concrete water tank
-height_m <- 0.05
-soiltype <- 1
-shade_perc <- 100
-wetness_perc <- 100
-
-# set lat longs of the location
-
-# placename <- "Awash, Ethiopia"
-# loc <- c(40.142981, 8.9972474)
-
-# placename <- "Niamey, Niger"
-# loc <- c(2.0840132, 13.5127664)
-
-# placename <- "Lahore, Pakistan"
-# loc <- c(74.0047326, 31.4831037)
-
-# placename <- "Bangui, CAR"
-# loc <- c(18.561247, 4.365849)
-
-# placename <- "Naypyidaw, Myanmar"
-# loc <- c(95.9325102, 19.7470939)
-
-# placename <- "Iran"
-# loc <- c(57.514125259779256, 28.264071517435397)
-
+# # height above the ground (metres) at which to calculate conditions, substrate
+# # type, and degree of shade in this place - set to 5cm, rock (ie.
+# # concrete) and 100% shade to represent a mosquito resting against side of a
+# # concrete water tank
+# height_m <- 0.05
+# soiltype <- 1
+# shade_perc <- 100
+# wetness_perc <- 100
+# 
+# # set lat longs of the location
+# 
+# # placename <- "Awash, Ethiopia"
+# # loc <- c(40.142981, 8.9972474)
+# 
+# # placename <- "Niamey, Niger"
+# # loc <- c(2.0840132, 13.5127664)
+# 
+# # placename <- "Lahore, Pakistan"
+# # loc <- c(74.0047326, 31.4831037)
+# 
+# # placename <- "Bangui, CAR"
+# # loc <- c(18.561247, 4.365849)
+# 
+# # placename <- "Naypyidaw, Myanmar"
+# # loc <- c(95.9325102, 19.7470939)
+# 
+# # placename <- "Iran"
+# # loc <- c(57.514125259779256, 28.264071517435397)
+# 
 placename <- "Salem, India"
 loc <- c(78.14653260343869, 11.66683664584138)
 
-micro <- micro_global(
-  # place
-  loc = loc,
-  timeinterval = 365,
-  # microclimate characteristics
-  Usrhyt = height_m,
-  maxshade = shade_perc,
-  soiltype = soiltype,
-  PCTWET = wetness_perc,
-  runmoist = 0,
-  # make rainfall less mad
-  rainfrac = 0,
-  evenrain = 1
-)
-
-# plottable dates
-microclimate_temperature_all <- micro$shadmet[, "TALOC"] 
-microclimate_humidity_all <- micro$shadmet[, "RHLOC"] 
-outside_temperature_all <- micro$metout[, "TAREF"]
-outside_humidity_all <- micro$metout[, "RH"]
-
-# add this in to population model
-microclimate_water_temperature_all <- micro$shadsoil[, "D0cm"]
-
-temp_range <- range(c(microclimate_temperature_all, outside_temperature_all))
-rh_range <- range(c(microclimate_humidity_all, outside_humidity_all))
-
-par(mfrow = c(2, 2),
-    oma = c(0, 0, 3, 0))
-
-# annual profile
-# thin to 2 datapoints per day
-keep <- (micro$dates %% 1) %in% c(0, 0.25, 0.5, 0.75)
-dates <- lubridate::date_decimal(micro$dates[keep] / 365)
-microclimate_temperature <- microclimate_temperature_all[keep]
-microclimate_humidity <- microclimate_humidity_all[keep]
-outside_temperature <- outside_temperature_all[keep]
-outside_humidity <- outside_humidity_all[keep]
-
-
-date_range <- range(dates)
-
-plot(outside_temperature ~ dates,
-     col = "orange",
-     type = "l",
-     lwd = 0.2,
-     ylab = "Temperature (C)",
-     xlab = "",
-     ylim = temp_range,
-     xlim = date_range)
-lines(microclimate_temperature ~ dates, col = "red", lwd = 0.2)
-title("Annual temperature profile")
-
-
-plot(outside_humidity ~ dates,
-     col = "lightblue",
-     type = "l",
-     lwd = 0.2,
-     ylab = "Relative humidity (%)",
-     xlab = "",
-     ylim = rh_range,
-     xlim = date_range)
-lines(microclimate_humidity ~ dates,
-      col = "blue",
-      lwd = 0.2)
-title("Annual humidity profile")
-
-# zoom in on one month
-keep <- seq_along(micro$dates)
-dates <- lubridate::date_decimal(micro$dates[keep] / 365)
-microclimate_temperature <- microclimate_temperature_all[keep]
-microclimate_humidity <- microclimate_humidity_all[keep]
-outside_temperature <- outside_temperature_all[keep]
-outside_humidity <- outside_humidity_all[keep]
-
-date_range <- lubridate::date_decimal(c(6.5, 6.6) / 12)
-
-plot(outside_temperature ~ dates,
-     col = "orange",
-     type = "l",
-     lwd = 1,
-     ylab = "Temperature (C)",
-     xlab = "",
-     ylim = temp_range,
-     xlim = date_range)
-lines(microclimate_temperature ~ dates,
-      col = "red",
-      lwd = 2)
-title("Mid-June temperature profile")
-
-plot(outside_humidity ~ dates,
-     col = "lightblue",
-     type = "l",
-     lwd = 1,
-     ylab = "Relative humidity (%)",
-     xlab = "",
-     ylim = rh_range,
-     xlim = date_range)
-lines(microclimate_humidity ~ dates,
-      col = "blue",
-      lwd = 2)
-title("Mid-June humidity profile")
-
-title(main = paste("Microclimate conditions in", placename,
-      "
-      either inside a concrete water tank (red, blue) or outside (orange, light blue)"),
-      outer = TRUE)
+# micro <- micro_global(
+#   # place
+#   loc = loc,
+#   timeinterval = 365,
+#   # microclimate characteristics
+#   Usrhyt = height_m,
+#   maxshade = shade_perc,
+#   soiltype = soiltype,
+#   PCTWET = wetness_perc,
+#   runmoist = 0,
+#   # make rainfall less mad
+#   rainfrac = 0,
+#   evenrain = 1
+# )
+# 
+# # plottable dates
+# microclimate_temperature_all <- micro$shadmet[, "TALOC"] 
+# microclimate_humidity_all <- micro$shadmet[, "RHLOC"] 
+# outside_temperature_all <- micro$metout[, "TAREF"]
+# outside_humidity_all <- micro$metout[, "RH"]
+# 
+# # add this in to population model
+# microclimate_water_temperature_all <- micro$shadsoil[, "D0cm"]
+# 
+# temp_range <- range(c(microclimate_temperature_all, outside_temperature_all))
+# rh_range <- range(c(microclimate_humidity_all, outside_humidity_all))
+# 
+# par(mfrow = c(2, 2),
+#     oma = c(0, 0, 3, 0))
+# 
+# # annual profile
+# # thin to 2 datapoints per day
+# keep <- (micro$dates %% 1) %in% c(0, 0.25, 0.5, 0.75)
+# dates <- lubridate::date_decimal(micro$dates[keep] / 365)
+# microclimate_temperature <- microclimate_temperature_all[keep]
+# microclimate_humidity <- microclimate_humidity_all[keep]
+# outside_temperature <- outside_temperature_all[keep]
+# outside_humidity <- outside_humidity_all[keep]
+# 
+# 
+# date_range <- range(dates)
+# 
+# plot(outside_temperature ~ dates,
+#      col = "orange",
+#      type = "l",
+#      lwd = 0.2,
+#      ylab = "Temperature (C)",
+#      xlab = "",
+#      ylim = temp_range,
+#      xlim = date_range)
+# lines(microclimate_temperature ~ dates, col = "red", lwd = 0.2)
+# title("Annual temperature profile")
+# 
+# 
+# plot(outside_humidity ~ dates,
+#      col = "lightblue",
+#      type = "l",
+#      lwd = 0.2,
+#      ylab = "Relative humidity (%)",
+#      xlab = "",
+#      ylim = rh_range,
+#      xlim = date_range)
+# lines(microclimate_humidity ~ dates,
+#       col = "blue",
+#       lwd = 0.2)
+# title("Annual humidity profile")
+# 
+# # zoom in on one month
+# keep <- seq_along(micro$dates)
+# dates <- lubridate::date_decimal(micro$dates[keep] / 365)
+# microclimate_temperature <- microclimate_temperature_all[keep]
+# microclimate_humidity <- microclimate_humidity_all[keep]
+# outside_temperature <- outside_temperature_all[keep]
+# outside_humidity <- outside_humidity_all[keep]
+# 
+# date_range <- lubridate::date_decimal(c(6.5, 6.6) / 12)
+# 
+# plot(outside_temperature ~ dates,
+#      col = "orange",
+#      type = "l",
+#      lwd = 1,
+#      ylab = "Temperature (C)",
+#      xlab = "",
+#      ylim = temp_range,
+#      xlim = date_range)
+# lines(microclimate_temperature ~ dates,
+#       col = "red",
+#       lwd = 2)
+# title("Mid-June temperature profile")
+# 
+# plot(outside_humidity ~ dates,
+#      col = "lightblue",
+#      type = "l",
+#      lwd = 1,
+#      ylab = "Relative humidity (%)",
+#      xlab = "",
+#      ylim = rh_range,
+#      xlim = date_range)
+# lines(microclimate_humidity ~ dates,
+#       col = "blue",
+#       lwd = 2)
+# title("Mid-June humidity profile")
+# 
+# title(main = paste("Microclimate conditions in", placename,
+#       "
+#       either inside a concrete water tank (red, blue) or outside (orange, light blue)"),
+#       outer = TRUE)
 
 
 
@@ -241,28 +241,29 @@ efd_function <- rehydrate_lifehistory_function(
   file.path(storage_path, "efd_temp_As.RDS")
 )
 
-# get hourly adult survival probabilities
-period_days <- 1 / 24
-survival_microclimate_all <- ds_function(temperature = microclimate_temperature_all,
-                                         humidity = microclimate_humidity_all) ^ period_days
 
-survival_outside_all <- ds_function(temperature = outside_temperature_all,
-                                    humidity = outside_humidity_all) ^ period_days
-
-survival_microclimate <- survival_microclimate_all[keep]
-survival_outside <- survival_outside_all[keep]
-par(mfrow = c(1, 1))
-plot(survival_outside ~ dates,
-     col = "light green",
-     type = "l",
-     lwd = 2,
-     ylab = "Hourly probability of survival",
-     xlab = "",
-     ylim = range(c(survival_microclimate, survival_outside)),
-     xlim = date_range)
-lines(survival_microclimate ~ dates,
-      col = "dark green",
-      lwd = 2)
+# # get hourly adult survival probabilities
+# period_days <- 1 / 24
+# survival_microclimate_all <- ds_function(temperature = microclimate_temperature_all,
+#                                          humidity = microclimate_humidity_all) ^ period_days
+# 
+# survival_outside_all <- ds_function(temperature = outside_temperature_all,
+#                                     humidity = outside_humidity_all) ^ period_days
+# 
+# survival_microclimate <- survival_microclimate_all[keep]
+# survival_outside <- survival_outside_all[keep]
+# par(mfrow = c(1, 1))
+# plot(survival_outside ~ dates,
+#      col = "light green",
+#      type = "l",
+#      lwd = 2,
+#      ylab = "Hourly probability of survival",
+#      xlab = "",
+#      ylim = range(c(survival_microclimate, survival_outside)),
+#      xlim = date_range)
+# lines(survival_microclimate ~ dates,
+#       col = "dark green",
+#       lwd = 2)
 
 
 
@@ -289,25 +290,25 @@ ds <- ds_function(temperature = conditions$habitat$air_temperature,
 par(mfrow = c(2, 2),
     oma = rep(0, 4),
     mar = c(3, 3, 4, 1) + 0.1)
-plot(ds ~ conditions$day,
+plot(ds ~ conditions$habitat$day,
      type = "l",
      xlim = c(10, 14),
      xlab = "", ylab = "",
      main = "adult survival prob")
-plot(das ~ conditions$day,
+plot(das ~ conditions$habitat$day,
      type = "l",
      xlim = c(10, 14),
      ylim = range(das, das64),
      xlab = "", ylab = "",
      main = "aquatic survival prob \n(low and high density)")
-lines(das64 ~ conditions$day,
+lines(das64 ~ conditions$habitat$day,
       lty = 2)
-plot(mdr ~ conditions$day,
+plot(mdr ~ conditions$habitat$day,
      type = "l",
      xlim = c(10, 14),
      xlab = "day of year", ylab = "",
      main = "larval development rate")
-plot(efd ~ conditions$day,
+plot(efd ~ conditions$habitat$day,
      type = "l",
      xlim = c(10, 14),
      xlab = "day of year", ylab = "",
@@ -320,12 +321,12 @@ states <- simulate_population(conditions$habitat)
 
 par(mfrow = c(2, 1),
     mar = c(4, 4, 1, 2) + 0.1)
-plot(states[, 1] ~ conditions$day,
+plot(states[, 1] ~ conditions$habitat$day,
      ylab = "aquatic stages",
      xlab = "",
      ylim = c(0, max(states[, 1])),
      type = "l")
-plot(states[, 2] ~ conditions$day,
+plot(states[, 2] ~ conditions$habitat$day,
      ylab = "adults",
      type = "l",
      ylim = c(0, max(states[, 2])),
@@ -955,10 +956,15 @@ suit %>%
 
 # to do:
 
+# resolve Niamey error
+
 # tidy up plotting against Whittaker data
 
 # tweak model to fit Whittaker data
 
-# tidy up visualisation of climate and lifehistory timeseries
+# tidy up visualisation of climate and lifehistory timeseries (ggplot code from
+# modelling conditions and larval habitat on different timeframes)
 
-# remake rasters to include larval habitat
+# clean up script
+
+# remake rasters including larval habitat

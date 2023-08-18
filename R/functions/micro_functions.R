@@ -162,6 +162,20 @@ rehydrate_lifehistory_function <- function(path_to_object) {
                body(object$dummy_function)))
 }
 
+# this is much faster than pmax(0, x)
+ensure_positive <- function(x) {
+  x * as.numeric(x > 0)
+}
+
+# this is much faster than pmin(x, max)
+enforce_max <- function(x, max) {
+  too_big <- x > max
+  x[too_big] <- max
+  x
+}
+
+
+
 ######
 # microclimate modelling
 
@@ -290,8 +304,12 @@ cone_volume_to_depth <- function(volume) {
 }
 
 cone_volume_to_surface <- function(volume) {
-  depth <- cone_volume_to_depth(volume)
-  pi * cone_depth_to_radius(depth) ^ 2
+  # depth <- cone_volume_to_depth(volume)
+  # pi * cone_depth_to_radius(depth) ^ 2
+  # with the right angle asusmption, we have sin(pi / 2) = 1, which cancels
+  # leaving this (which is a bit faster to evaluate in the larval habitat model)
+  # pi * (3 / pi) ^ (2/3) * volume ^ (2/3)
+  3.046474 * volume ^ 0.666667
 }
 
 # use the Buck equation to estimate the vapour pressure in kPa
@@ -358,46 +376,34 @@ evaporation_rate_kg_h <- function(temperature_c,
 iterate_cone_volume <- function(water_volume,
                                 t,
                                 rainfall_mm_h,
-                                temperature_c,
-                                relative_humidity,
-                                altitude_m,
-                                windspeed_m_s,
-                                max_cone_depth = 1,
-                                inflow_multiplier = 1) {
+                                evaporation_rate_kg_h_m2,
+                                # temperature_c,
+                                # relative_humidity,
+                                # altitude_m,
+                                # windspeed_m_s,
+                                max_cone_volume = pi/3,
+                                catchment_area = pi) {
   
-  # define the cone - assume it cone has a maximum depth of 1m, so a maximum
-  # volume of 1.05m3, beyond which it cannot get more full
-  max_cone_volume <- cone_depth_to_volume(max_cone_depth)
+  # at each 1h timestep, compute evaporation before inflow
+  surface_area_m2 <- cone_volume_to_surface(water_volume)
+  loss_kg_h <- evaporation_rate_kg_h_m2[t] * surface_area_m2
   
-  # the catchment area is arbitrary (modelling only relative
-  # abundance), but set it to the maximum cone surface area - pi!
-  catchment_area <- cone_volume_to_surface(max_cone_volume)
-  
-  # at each 1h timestep, we compute evaporation before inflow
-  loss_kg_h <- evaporation_rate_kg_h(
-    temperature_c = temperature_c[t],
-    relative_humidity = relative_humidity[t],
-    altitude_m = altitude_m,
-    windspeed_m_s = windspeed_m_s[t],
-    surface_area_m2 = cone_volume_to_surface(water_volume)
-  )
-  
-  # this is a 1h timestep, so just convert this to m^3
+  # this is already a 1h timestep, so just convert this to m^3
   # 1kg = 1,000cm3
   # 1m3 = 1,000,000 cm3, so
   # 1m3 = 1,000kg
   loss <- loss_kg_h / 1000
   
-  # lose water, avoiding negatives
-  water_volume <- pmax(0, water_volume - loss)
+  # lose water, avoiding negative volume
+  water_volume <- ensure_positive(water_volume - loss)
   
   # 1000mm per metre, and catchment area is in m2, so convert to m3 (including
   # multiplier on inflow)
-  gain_m_h <- inflow_multiplier * rainfall_mm_h[t] / 1000
+  gain_m_h <- rainfall_mm_h[t] / 1000
   gain <- catchment_area * gain_m_h
   
-  # gain water, capping maximum
-  water_volume <- pmin(max_cone_volume, water_volume + gain)
+  # gain water, capping maximum volume
+  water_volume <- enforce_max(water_volume + gain, max = max_cone_volume)
   
   water_volume
   
@@ -423,7 +429,27 @@ simulate_ephemeral_habitat <- function(conditions,
 
   # and fixed info  
   altitude <- conditions$altitude
+
+  # set up the cone model
   
+  # define the cone - assume it cone has a maximum depth of 1m, so a maximum
+  # volume of 1.05m3, beyond which it cannot get more full
+  max_cone_volume <- cone_depth_to_volume(max_cone_depth)
+  
+  # the catchment area is arbitrary (modelling only relative
+  # abundance), but set it to the maximum cone surface area - pi!
+  catchment_area <- inflow_multiplier * cone_volume_to_surface(max_cone_volume)
+  
+  
+  # precalculate the evaporation rate per unit surface area
+  loss_kg_h_m2 <- evaporation_rate_kg_h(
+    temperature_c = air_temperature,
+    relative_humidity = relative_humidity,
+    altitude_m = altitude,
+    windspeed_m_s = windspeed,
+    surface_area_m2 = 1
+  )
+    
   # simulate the water volume
   n <- length(index)
   volumes <- numeric(length = length(index))
@@ -433,12 +459,13 @@ simulate_ephemeral_habitat <- function(conditions,
     volume <- iterate_cone_volume(water_volume = volume,
                                   t = t,
                                   rainfall_mm_h = rainfall,
-                                  temperature_c = air_temperature,
-                                  relative_humidity = relative_humidity,
-                                  altitude_m = altitude,
-                                  windspeed_m_s = windspeed,
-                                  max_cone_depth = max_cone_depth,
-                                  inflow_multiplier = inflow_multiplier)
+                                  evaporation_rate_kg_h_m2 = loss_kg_h_m2,
+                                  # temperature_c = air_temperature,
+                                  # relative_humidity = relative_humidity,
+                                  # altitude_m = altitude,
+                                  # windspeed_m_s = windspeed,
+                                  max_cone_volume = max_cone_volume,
+                                  catchment_area = catchment_area)
     volumes[t] <- volume
   }
 

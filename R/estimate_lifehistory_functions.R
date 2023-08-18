@@ -222,13 +222,18 @@ define_jags_model <- function(data,
   
 }
 
-# spline through the prediction and temperaures, and then constrain to be
+# this is much faster than pmax(0, x)
+ensure_positive <- function(x) {
+  x * as.numeric(x > 0)
+}
+
+# spline through the prediction and temperatures, and then constrain to be
 # non-negative (as spline can induce negatives)
 positive_spline <- function(pred, temps_out) {
   
   function_raw <- splinefun(temps_out, pred)
   function_positive <- function(temperature) {
-    pmax(0, function_raw(temperature))
+    ensure_positive(function_raw(temperature))
   }
   
   function_positive
@@ -529,7 +534,7 @@ dehydrate_lifehistory_function <- function(fun, path_to_object) {
     object <- list(
       arguments = arguments,
       temperature_function_raw = e$function_raw,
-      rectifier = function(x) {pmax(0, x)},
+      rectifier = ensure_positive,
       dummy_function = function() {
         object$rectifier(
           object$temperature_function_raw(
