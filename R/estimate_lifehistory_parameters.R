@@ -16,7 +16,7 @@ library(tidyverse)
 # for contour labelling
 library(metR)
 
-source()
+source("R/functions/lifehistory_estimation_functions.R")
 
 # Note: I had to get jags running on my M2 mac, so I did the following before
 # loading rjags:
@@ -38,6 +38,8 @@ data_villena <- load_villena_data()
 # to adult) as a function of temperature
 mdr_temp_As <- fit_mdr_temp(data_villena, species = "An. stephensi")
 mdr_temp_Ag <- fit_mdr_temp(data_villena, species = "An. gambiae")
+
+stop("MDR function for An gambiae fits data very poorly - try rerunning with sample size information")
 
 # EFD: eggs per female per day as a function of temperature
 efd_temp_As <- fit_efd_temp(data_villena, species = "An. stephensi")
@@ -178,7 +180,7 @@ ggsave("figures/lifehistory_temperature_gambiae.png",
 # panels D&F and use it to compute a density coefficent on the log hazard scale
 # for the probability of survival. Note that Evans don't give the data in
 # survival curve form and don't specify the durations of the experiments so we
-# again use the modelled MDR as the expoure period and a Cox PH model to model
+# again use the modelled MDR as the exposure period and a Cox PH model to model
 # that. Note that this assumes density does not affect development rate, but any
 # impact of that on fraction reaching adulthood will be accounted for in the
 # survival effect. Evan et al.: https://doi.org/10.1002/eap.2334
@@ -215,40 +217,78 @@ plot(mortality_model)
 dd_effect_As <- fixef(mortality_model)[["density"]]
 
 # Note that we could roll all of this into the GAM temperature survival model,
-# but that would be hard to model with multiple datasts and noise terms, and
+# but that would be hard to model with multiple datasets and noise terms, and
 # would require a 2D spline which would be more computationally costly to
 # predict from when simulating the model
 
-# create the final function
+# The experiment used (Evans et al.) has 250ml water in a 'quart size mason
+# jar', which is rather quaint, but not particularly specific. I'm assuming it's
+# a Ball brand 'regular mouth canning jar'. According to masonjarlifestyle.com,
+# that has a 2 3/8" internal diameter. In real money, that's 6.0325cm, for an
+# area of 28.5814687428cm^2, or 0.00285814687m2.
+evans_area_cm2 <- pi * (6.0325 / 2) ^ 2
+
+# create the final function, using the Cox proportional hazards mapping
 das_temp_dens_As <- make_surv_temp_dens_function(
   surv_temp_function = das_temp_As,
-  dd_effect = dd_effect_As
+  dd_effect = dd_effect_As,
+  surface_area_cm2 = evans_area_cm2,
+  type = "cox_ph"
 )
 
-# need larval density dependence for An gambiae
-# das_temp_dens_Ag <- make_surv_temp_dens_function(
-#   surv_temp_function = das_temp_Ag,
-#   dd_effect = dd_effect_Ag
-# )
+# model larval density dependence for An. gambiae by extracting the slope of the
+# density dependence relationsship from Muriu et al. (2013) and combining it
+# with the parameter for daily aquatic survival as a funciton of temperature
+dd_effect_Ag <- load_muriu_dd_survival_parameters() %>%
+  pull(slope)
+
+# the dish in muriu is 35cm diameter, so ~~962cm2 surface area
+muriu_area_cm2 <- pi * (35 / 2) ^ 2
+
+# this was modelled a logistic function of log density, so we need to model it
+# differently for for stephensi
+das_temp_dens_Ag <- make_surv_temp_dens_function(
+  surv_temp_function = das_temp_Ag,
+  dd_effect = dd_effect_Ag,
+  surface_area_cm2 =  muriu_area_cm2,
+  type = "logit"
+)
 
 # plot the survival model
 density_plotting <- expand_grid(
-  temperature = seq(10, 40, length.out = 100),
-  density = seq(0, 210, length.out = 100)  
+  temperature = seq(0, 40, length.out = 100),
+  density = seq(0, 10, length.out = 100)
+  # species = c("An. stephensi", "An. gambiae")
 ) %>%
   rowwise() %>%
   mutate(
-    prob = das_temp_dens_As(temperature, density)
+    prob_As = das_temp_dens_As(temperature, density),
+    prob_Ag = das_temp_dens_Ag(temperature, density),
+  ) %>%
+  pivot_longer(
+    cols = starts_with("prob"),
+    names_to = "species",
+    names_prefix = "prob_",
+    values_to = "prob"
+  ) %>%
+  mutate(
+    species = case_when(
+      species == "As" ~ "An. stephensi",
+      species == "Ag" ~ "An. gambiae"
+    )
   )
 
 max_grey <- 0.6
 cols <- grey(1 - max_grey * seq(0, 1, by = 0.1))
 cols[1] <- "transparent"
 
-ggplot(density_plotting,
-       aes(y = density,
-           x = temperature,
-           z = prob)) +
+das_As_plot <- density_plotting %>%
+  filter(species == "An. stephensi") %>%
+  ggplot(
+    aes(y = density,
+        x = temperature,
+        z = prob)
+  ) +
   geom_contour_filled(
     binwidth = 0.1
   ) +
@@ -259,22 +299,72 @@ ggplot(density_plotting,
   ) +
   geom_text_contour(
     binwidth = 0.1,
-    nudge_y = -5,
+    nudge_y = -0.2,
     # rotate = FALSE,
     skip = 0
     # label.placer = label_placer_n(3)
   ) +
+  coord_cartesian(
+    ylim = c(0, 7),
+    xlim = c(5, 40)
+  ) +
   scale_fill_discrete(type = cols) +
   theme_minimal() +
   theme(legend.position = "none") +
-  ggtitle("Daily survival probability of aquatic stages") +
-  ylab("Individuals per 250ml") +
+  ggtitle("Daily survival probability of aquatic stages",
+          "of An. stephensi") +
+  ylab("Individuals per cm2") +
   xlab("Temperature (C)")
 
 ggsave("figures/aquatic_survival_stephensi.png",
+       plot = das_As_plot,
        bg = "white",
        width = 5,
        height = 5)
+
+# and for An gambiae
+das_Ag_plot <- density_plotting %>%
+  filter(species == "An. gambiae") %>%
+  ggplot(
+    aes(y = density,
+        x = temperature,
+        z = prob)
+  ) +
+  geom_contour_filled(
+    binwidth = 0.1
+  ) +
+  geom_contour(
+    binwidth = 0.1,
+    colour = grey(0.2),
+    linewidth = 0.5
+  ) +
+  geom_text_contour(
+    binwidth = 0.1,
+    nudge_y = -0.05,
+    # rotate = FALSE,
+    skip = 0
+    # label.placer = label_placer_n(3)
+  ) +
+  coord_cartesian(
+    ylim = c(0, 1.6),
+    xlim = c(0, 40)
+  ) +
+  scale_fill_discrete(type = cols) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  ggtitle("Daily survival probability of aquatic stages",
+          "of An. gambiae") +
+  ylab("Individuals per 250ml") +
+  xlab("Temperature (C)")
+
+# need to fix the low-temperature survival for An. gambiae
+ggsave("figures/aquatic_survival_gambiae.png",
+       plot = das_Ag_plot,
+       bg = "white",
+       width = 5,
+       height = 5)
+
+
 
 # model adult survival as a function of air temperature and humidity. Reanalyse
 # Bayoh data on an gambiae, include other data on longer-lived An gambiae, and

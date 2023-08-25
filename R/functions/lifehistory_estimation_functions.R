@@ -164,7 +164,7 @@ temp.sim.quants<-function(sim.data, l.temps, byCol=FALSE,
 }
 
 # the following code is given by Villena et al. for fitting JAGS models of the
-# diffferent types:
+# different types:
 
 # Briere model (MDR, PDR, a)
 jags_briere.bug <- "model {
@@ -319,7 +319,7 @@ fit_mdr_temp <- function(data,
 # Use the Villena et al JAGS code to estimate the relationship between
 # temperature and eggs per female per day for the required species
 
-# note that we modell the EFD curve as a down quadratic, as described in the
+# note that we model the EFD curve as a down quadratic, as described in the
 # paper and SI, but the one plotted in the MS is clearly a Gaussian. I also had
 # to remove the observation truncation in the model definition, since a bunch of
 # 0s were observed and these were being thrown out, and also to flip the sign on
@@ -503,21 +503,64 @@ load_villena_data <- function() {
   
 }
 
-# given a survival temperature function and a density dependence log hazard
-# coeficient, return a survival function of temperature and density
-make_surv_temp_dens_function <- function(surv_temp_function, dd_effect) {
-  function(temperature, density) {
-    # get daily *mortality probability* at zero/low density at this temperature
-    daily_mortality_zero_density <- 1 - surv_temp_function(temperature)
-    # convert to the log hazard for a single day
-    loghaz_mortality_zero_density <- log(-log(1 - daily_mortality_zero_density))
-    # add on the density effect
-    loghaz_mortality <- loghaz_mortality_zero_density + dd_effect * density
-    # convert back to a daily *mortality probability*, including the density effect
-    daily_mortality <- 1 - exp(-exp(loghaz_mortality))
-    # and return as daily survival
-    1 - daily_mortality
+# given a survival temperature function, a fitted density dependence parameter
+# (relative to some absolute number of individuals in a dish), the surface area
+# of that dish, and the type of relationship fitted,
+# return a survival function of temperature and density
+make_surv_temp_dens_function <- function(surv_temp_function,
+                                         dd_effect,
+                                         surface_area_cm2,
+                                         type = c("cox_ph", "logit")) {
+  
+  type <- match.arg(type)
+  
+  if(type == "cox_ph") {
+    # if the parameter for the density-dependent effect on survival is estimated
+    # as in a Cox proportional hazards model, use a complementary log-log function
+    # mapping:
+    fun <- function(temperature, density) {
+      # scale density to the experimental dish size used in estimating the
+      # equation
+      density_dish <- density * surface_area_cm2
+      # get daily *mortality probability* at zero/low density at this
+      # temperature
+      daily_mortality_zero_density <- 1 - surv_temp_function(temperature)
+      # convert to the log hazard for a single day
+      loghaz_mortality_zero_density <- log(-log(1 - daily_mortality_zero_density))
+      # add on the density effect linear in log density (per dish used to
+      # estimate the parameter)
+      loghaz_mortality <- loghaz_mortality_zero_density +
+        dd_effect * density_dish
+      # convert back to a daily *mortality probability*, including the density
+      # effect
+      daily_mortality <- 1 - exp(-exp(loghaz_mortality))
+      # and return as daily survival
+      1 - daily_mortality
+    }
+  } else if (type == "logit") {
+    # if the parameter for the density-dependent effect on survival is estimated
+    # as the slope in a logit model of log densities use that to transform ir complementary log-log function
+    # mapping
+    fun <- function(temperature, density) {
+      # scale density to the experimental dish size used in estimating the
+      # equation
+      density_dish <- density * surface_area_cm2
+      # get logit of daily survival probability at zero/low density at this
+      # temperature
+      logit_daily_survival_zero_density <- qlogis(surv_temp_function(temperature))
+      # add on the density effect linear in log density (per dish used to
+      # estimate the parameter)
+      logit_daily_survival <- logit_daily_survival_zero_density +
+        dd_effect * density_dish
+      # convert back to a daily survival probability, including the density
+      # effect, and return
+      plogis(logit_daily_survival)
+    }
   }
+
+  # return the appropriate function
+  fun
+
 }
 
 dehydrate_lifehistory_function <- function(fun, path_to_object) {
@@ -870,6 +913,50 @@ load_shapiro_data <- function() {
       study = "shapiro"
     )
   
+}
+
+# Read off the modelled probabilities of An. gambiae surviving to pupation at
+# different larval densities, from Figure 1A of Muriu et al. (2013)
+# https://doi.org/10.1111/1365-2656.12002, and convert to intercept and slope
+# parameters for analysis
+load_muriu_dd_survival_parameters <- function() {
+  tibble::tribble(
+    ~group, ~survival_low_density, ~survival_high_density,
+    "yellow", 0.93, 0.37,
+    "black", 0.9, 0.6,
+    "cyan", 0.87, 0.35,
+    "magenta", 0.84, 0.48,
+    "red", 0.68, 0.45,
+    "blue", 0.59, 0.35,
+    "green", 0.44, 0.1,
+    "main", 0.82, 0.37
+  ) %>%
+    mutate(
+      density_low = 32,
+      density_high = 512,
+      species = "An. gambiae",
+      temperature = mean(c(22, 30))
+    ) %>%
+    mutate(
+      # transform to linear model scale
+      across(starts_with("survival"), qlogis),
+      # note Muriu et al. modelled as a log-linear relationship - we skip this
+      # and remodel based on the estimates at two densities
+      # across(starts_with("density"), log),
+      # compute slope for each group
+      survival_diff = survival_high_density - survival_low_density,
+      density_diff = density_high - density_low,
+      slope = survival_diff / density_diff,
+      # and intercept
+      intercept = survival_low_density - slope * density_low
+    ) %>%
+    # average these
+    group_by(species, temperature) %>%
+    summarise(
+      intercept = mean(intercept),
+      slope = mean(slope),
+      .groups = "drop"
+    )
 }
 
 mortality_prob_to_log_hazard <- function(mortality_prob) log(-log(1 - mortality_prob))

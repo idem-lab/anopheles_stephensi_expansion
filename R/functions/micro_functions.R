@@ -162,6 +162,13 @@ rehydrate_lifehistory_function <- function(path_to_object) {
                body(object$dummy_function)))
 }
 
+# ensure all values of x are greater than or equal to min
+# this is much faster than pmax(x, min)
+ensure_gte <- function(x, min = .Machine$double.eps) {
+  mask <- as.numeric(x >= min)
+  x * mask + min * (1 - mask)
+}
+
 # this is much faster than pmax(0, x)
 ensure_positive <- function(x) {
   x * as.numeric(x > 0)
@@ -754,7 +761,7 @@ simulate_population <- function(
 
 summarise_dynamics <- function(states, surface_area_m2 = 10000) {
   
-  # given a habitat surace area in square metres, get the population multiplier
+  # given a habitat surface area in square metres, get the population multiplier
   # to scale up the experimental density dependence to get the absolute
   # population sizes for the given pool of water. The experiment used (Evans et
   # al.) has 250ml water in a 'quart size mason jar', which is rather quaint,

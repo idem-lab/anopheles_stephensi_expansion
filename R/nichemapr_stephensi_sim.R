@@ -625,8 +625,6 @@ ggsave("figures/microclimate_year.png",
 
 # to do:
 
-# pull out lifehistory estimation functions into a separate file, and source it
-
 # compute larval density dependence for An. gambiae, from Muriu, or the other
 # available data
 
