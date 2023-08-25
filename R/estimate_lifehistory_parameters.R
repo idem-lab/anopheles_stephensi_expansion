@@ -701,7 +701,7 @@ dehydrate_lifehistory_function(pea_temp_Ag, file.path(storage_path, "pea_temp_Ag
 
 # DAS ~ temp + density
 dehydrate_lifehistory_function(das_temp_dens_As, file.path(storage_path, "das_temp_dens_As.RDS"))
-# dehydrate_lifehistory_function(das_temp_dens_Ag, file.path(storage_path, "das_temp_dens_Ag.RDS"))
+dehydrate_lifehistory_function(das_temp_dens_Ag, file.path(storage_path, "das_temp_dens_Ag.RDS"))
 
 # AS ~ temp + humidity + species
 dehydrate_lifehistory_function(ds_temp_humid, file.path(storage_path, "ds_temp_humid.RDS"))

@@ -7,10 +7,9 @@ library(tidyverse)
 
 source("R/functions/micro_functions.R")
 
-# load the functions giving lifehistory parameters as a function of temperature
-lifehistory_functions_stephensi <- get_lifehistory_functions("An. stephensi")
-# lifehistory_functions_gambiae <- get_lifehistory_functions("An. gambiae")
-
+# load climate-dependent lifehistory functions for An. stephensi and An. gambiae
+lifehistory_functions_As <- get_lifehistory_functions("An. stephensi")
+lifehistory_functions_Ag <- get_lifehistory_functions("An. gambiae")
 
 # find all the centroids of the climate raster, for the Afro and EMRO regions,
 # so we can evaluate this all over the raster
@@ -51,7 +50,7 @@ coords <- xyFromCell(region_raster_mask, cells(region_raster_mask))
 
 # aggregate it to get a lower resolution set of coordinates for debugging -
 # original resolution is ~18.5km at the equator
-region_raster_mask_agg <- aggregate(region_raster_mask, 15)
+region_raster_mask_agg <- aggregate(region_raster_mask, 1)
 coords_agg <- xyFromCell(region_raster_mask_agg, cells(region_raster_mask_agg))
 nrow(coords_agg)
 
@@ -92,11 +91,37 @@ sfExport(list = list("model_climatic_conditions",
                      "iterate_state",
                      "create_matrix",
                      "summarise_dynamics"))
+
+# run first for An stephensi microclimate, with permanent water
 time_agg <- system.time(
-  results_list <- sfLapply(coords_list,
-                           calculate_suitability,
-                           lifehistory_functions = lifehistory_functions_stephensi)
+  results_list_As <- sfLapply(
+    coords_list,
+    calculate_suitability,
+    lifehistory_functions = lifehistory_functions_As,
+    microclimates = "habitat",
+    larval_habitats = "permanent"
+    )
 )
+
+# time in minutes - 41 for aggregated
+# in parallel, 191 mins @ agg 4
+time_agg["elapsed"] / 60
+
+# 
+# # then run for An gambiae, non-microclimate, with ephemeral water
+# time_agg <- system.time(
+#   results_list_Ag <- sfLapply(
+#     coords_list,
+#     calculate_suitability,
+#     lifehistory_functions = lifehistory_functions_Ag,
+#     microclimates = "outside",
+#     larval_habitats = "ephemeral"
+#   )
+# )
+# 
+# time_agg["elapsed"] / 60
+
+sfStop()
 
 # # look for the bad ones - could do this faster in parallel with a trycatch
 # for (i in seq_along(coords_list)) {
@@ -116,97 +141,83 @@ time_agg <- system.time(
 # 
 # nrow(coords_agg)
 
-# time in minutes - 41 for aggregated
-# in parallel, 191 mins @ agg 4
-time_agg["elapsed"] / 60
 
-sfStop()
 
-# add on the coordinates
-index_list <- lapply(seq_along(coords_list), function(x) tibble(cell_index = x))
+# add on the index to the raster
+valid_cell_index <- cellFromXY(region_raster_mask_agg, coords_agg[valid_cells, ])
+index_list <- lapply(valid_cell_index, function(x) tibble(cell_index = x))
 
-results <- mapply(bind_cols, results_list, coords_list, index_list, SIMPLIFY = FALSE) %>%
+results_As <- mapply(bind_cols,
+                     index_list,
+                     results_list_As,
+                     # coords_list,
+                     SIMPLIFY = FALSE) %>%
   bind_rows() %>%
-  `rownames<-`(NULL)
-
-head(results)
-tail(results)
-
-results_annual <- results %>%
-  filter(
-    microclimate == "habitat",
-    larval_habitat == "permanent"
-  ) %>%
-  group_by(
+  `rownames<-`(NULL) %>%
+  select(
     cell_index,
-    x,
-    y,
-    microclimate
+    month,
+    relative_abundance
   ) %>%
-  summarise(
-    months_suitable = sum(persistence),
-    relative_abundance = mean(relative_abundance),
-    .groups = "drop"
+  # scale relative abundance to have maximum value 1
+  mutate(
+    relative_abundance = relative_abundance / max(relative_abundance)
   )
-# mutate(
-#   relative_abundance = case_when(
-#     months_suitable == 0 ~ 0,
-#     .default = relative_abundance
-#   )
-# )
+
+# work out the index to insert the values
+index <- expand.grid(
+  cell_index = seq_len(ncell(region_raster_mask_agg)),
+  month = 1:12
+) %>%
+  left_join(
+    results_As,
+    by = join_by(cell_index, month)
+  ) %>%
+  arrange(
+    month,
+    cell_index,
+  )
 
 
-months_suitable_agg <- annual_relative_abundance_agg <- region_raster_mask_agg
-names(months_suitable_agg) <- "months suitable"
-names(annual_relative_abundance_agg) <- "relative abundance (annual)"
+# make an empty monthly raster in which to put results
+monthly_relative_abundance_agg <- replicate(12, region_raster_mask_agg, simplify = FALSE) %>%
+  do.call(c, .)
+names(monthly_relative_abundance_agg) <- month.name
+values(monthly_relative_abundance_agg) <- index$relative_abundance
 
-cell_index <- cellFromXY(region_raster_mask_agg, coords_agg[valid_cells, ])
-months_suitable_agg[cell_index] <- results_annual$months_suitable
-annual_relative_abundance_agg[cell_index] <- results_annual$relative_abundance
-annual_relative_abundance_agg <- annual_relative_abundance_agg / global(annual_relative_abundance_agg, max, na.rm = TRUE)[[1]]
-# values(months_suitable_agg) <- results_annual$months_suitable
 
-library(tidyterra)
+
 ggplot() +
   geom_spatraster(
-    data = months_suitable_agg,
-    aes(fill = `months suitable`)
+    data = monthly_relative_abundance_agg,
   ) +
+  facet_wrap(~lyr,
+             ncol = 3,
+             nrow = 4) +
   scale_fill_distiller(
-    palette = "Blues",
+    palette = "YlGnBu",
     direction = 1,
     na.value = grey(0.9)
   ) +
-  guides(fill=guide_legend(title = "Months")) +
+  labs(fill = "Relative\nabundance") +
   theme_minimal() +
-  ggtitle("Predicted number of months per year suitable for\nAn. stephensi persistence in microclimate")
-
-ggsave("figures/mechanistic_persistence.png",
-       bg = "white",
-       width = 9,
-       height = 7)
-
-ggplot() +
-  geom_spatraster(
-    data = annual_relative_abundance_agg,
-    aes(fill = `relative abundance (annual)`)
+  theme(
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
   ) +
-  scale_fill_distiller(
-    palette = "Greens",
-    direction = 1,
-    na.value = grey(0.9), 
-    trans = "sqrt"
-  ) +
-  guides(
-    fill=guide_legend(title = "Suitability")
-  ) +
-  theme_minimal() +
-  ggtitle("Predicted climatic suitability for An. stephensi\ninside a microclimate")
+  ggtitle("Predicted abundance of An. stephens per microclimate")
 
 ggsave("figures/mechanistic_suitability.png",
        bg = "white",
-       width = 9,
+       width = 7,
        height = 7)
+
+# save raster
+writeRaster(monthly_relative_abundance_agg,
+            file = "output/An_stephensi_mechanistic_abundance.tif",
+            overwrite = TRUE)
 
 # to do:
 

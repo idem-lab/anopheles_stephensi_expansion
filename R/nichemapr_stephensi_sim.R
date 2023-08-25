@@ -17,28 +17,27 @@
 
 library(NicheMapR)
 library(tidyverse)
-# library(mgcv)
 
 source("R/functions/micro_functions.R")
 
 
-# load climate-dependent lifehistory functions for An. stephensi
-lifehistory_functions_stephensi <- get_lifehistory_functions("An. stephensi")
+# load climate-dependent lifehistory functions for An. stephensi and An. gambiae
+lifehistory_functions_As <- get_lifehistory_functions("An. stephensi")
+# lifehistory_functions_Ag <- get_lifehistory_functions("An. gambiae")
 
-
-# pull them out to plot them separately
+# pull them out to plot them separately for An. stephensi
 # daily survival of adults, as a function of temperature and humidity
-ds_function <- lifehistory_functions_stephensi$ds_function
+ds_function <- lifehistory_functions_As$ds_function
 
 # development rate of aquatic stages as a function of water temperature
-mdr_function <- lifehistory_functions_stephensi$mdr_function
+mdr_function <- lifehistory_functions_As$mdr_function
 
 # daily survival probability of aquatic stages as a function of water
 # temperature and density of aquatic stages
-das_function <- lifehistory_functions_stephensi$das_function
+das_function <- lifehistory_functions_As$das_function
 
 # daily egg laying as a function of air temperature
-efd_function <- lifehistory_functions_stephensi$efd_function
+efd_function <- lifehistory_functions_As$efd_function
 
 # given our microclimate data, we can now compute these parameters
 
@@ -90,7 +89,8 @@ plot(efd ~ conditions$habitat$day,
 # put this into a population dynamic simulation model
 
 conditions <- model_climatic_conditions(loc)
-states <- simulate_population(conditions$habitat, lifehistory_functions = lifehistory_functions_stephensi)
+states <- simulate_population(conditions$habitat,
+                              lifehistory_functions = lifehistory_functions_As)
 
 par(mfrow = c(2, 1),
     mar = c(4, 4, 1, 2) + 0.1)
@@ -243,9 +243,10 @@ whittaker_coords_list <- best_data %>%
   as_tibble() %>%
   split(seq_len(nrow(.)))
 
-whittaker_results_list <- lapply(whittaker_coords_list,
-                                 calculate_suitability,
-                                 lifehistory_functions = lifehistory_functions_stephensi)
+whittaker_results_list <- lapply(
+  whittaker_coords_list,
+  calculate_suitability,
+  lifehistory_functions = lifehistory_functions_As)
 
 index_list <- lapply(best_data$placename, function(x) tibble(placename = x))
 
@@ -624,9 +625,6 @@ ggsave("figures/microclimate_year.png",
        width = 5)
 
 # to do:
-
-# compute larval density dependence for An. gambiae, from Muriu, or the other
-# available data
 
 # make rasters for An. stephensi and An. gambiae, and save monthly densities as
 # separate layers
