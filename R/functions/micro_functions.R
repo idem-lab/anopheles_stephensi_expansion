@@ -248,6 +248,7 @@ smooth_rainfall <- function(micro, day = NULL) {
   
   # nichemapr gives daily rain per hour, so convert to hourly before smoothing
   rainfall_raw <- micro$RAINFALL / 24
+  
   # pull out monthly-constant rainfall and create days variable
   df_fit <- data.frame(
     rainfall = rainfall_raw,
@@ -261,6 +262,12 @@ smooth_rainfall <- function(micro, day = NULL) {
   } else {
     df_pred <- data.frame(
       day = day
+    )
+  }
+  
+  if (all(rainfall_raw == 0)) {
+    return(
+      rep(0, length(df_pred$day))
     )
   }
   
@@ -581,10 +588,15 @@ simulate_ephemeral_habitat <- function(conditions,
 ######
 # population modelling
 
-# write a function to construct the matrix appropriately, given the larval
-# density in the previous timestep
+# Build a simple two stage model (aquatic stages and adults), with effects of
+# density dependence (daily aquatic survival; DAS), water temperature (DAS and
+# aquatic development rate; MDR), air temperature (adult survival; DS, and egg
+# laying; EFD), and humidity (DS). Construct as a dynamic matrix.
 
+# construct the matrix appropriately, given the larval
+# density in the previous timestep
 create_matrix <- function(state,
+                          das_function,
                           larval_habitat_area,
                           water_temperature,
                           mdr,
@@ -624,12 +636,14 @@ create_matrix <- function(state,
 # iterate the state of the model
 iterate_state <- function(state,
                           t,
+                          das_function,
                           larval_habitat_area,
                           water_temperature,
                           mdr,
                           efd,
                           ds) {
   mat <- create_matrix(state = state,
+                       das_function,
                        larval_habitat_area = larval_habitat_area[t],
                        water_temperature = water_temperature[t],
                        mdr = mdr[t],
@@ -638,9 +652,62 @@ iterate_state <- function(state,
   mat %*% state
 }
 
+# access a list of the lifehistory functions needed for the named species
+get_lifehistory_functions <- function(
+    species = c("An. stephensi", "An. gambiae"),
+    storage_path = "data/life_history_params/dehydrated") {
+  
+  # enforce the species label
+  species <- match.arg(species)
+  
+  # load the daily adult survival for either An. gambiae or An. stephensi
+  ds_temp_humid = rehydrate_lifehistory_function(
+    file.path(storage_path, "ds_temp_humid.RDS")
+  ) 
+  
+  # subset to this species
+  ds_function <- function(temperature, humidity) {
+    ds_temp_humid(temperature, humidity, species = species)
+  }
+  
+  # for the others, load the relevant RDS object
+  species_suffix <- switch(species,
+                           "An. stephensi" = "As",
+                           "An. gambiae" = "Ag")
+  
+  # development rate of aquatic stages as a function of water temperature
+  mdr_function = rehydrate_lifehistory_function(
+    file.path(storage_path,
+              sprintf("mdr_temp_%s.RDS", species_suffix))
+  )
+  
+  # daily survival probability of aquatic stages as a function of water
+  # temperature and density of aquatic stages
+  das_function = rehydrate_lifehistory_function(
+    file.path(storage_path,
+              sprintf("das_temp_dens_%s.RDS", species_suffix))
+  )
+  
+  # daily egg laying as a function of air temperature
+  efd_function = rehydrate_lifehistory_function(
+    file.path(storage_path,
+              sprintf("efd_temp_%s.RDS", species_suffix))
+  )
+  
+  # return as a named list of functions
+  list(
+    ds_function = ds_function,
+    mdr_function = mdr_function,
+    das_function = das_function,
+    efd_function = efd_function
+  )
+  
+}
+
 # simulate for a full timeseries, with optional multiple years of burnin
 simulate_population <- function(
     conditions,
+    lifehistory_functions,
     larval_habitat_area = rep(pi, length(conditions$day)),
     initial_state = rep(100, 2),
     burnin_years = 1) {
@@ -651,10 +718,13 @@ simulate_population <- function(
   
   # pull out timeseries needed for simulating
   water_temperature <- conditions$water_temperature[index]
-  mdr <- mdr_function(conditions$water_temperature[index])
-  efd <- efd_function(conditions$air_temperature[index])
-  ds <- ds_function(temperature = conditions$air_temperature[index],
-                    humidity = conditions$humidity[index])
+  mdr <- lifehistory_functions$mdr_function(
+    conditions$water_temperature[index])
+  efd <- lifehistory_functions$efd_function(
+    conditions$air_temperature[index])
+  ds <- lifehistory_functions$ds_function(
+    temperature = conditions$air_temperature[index],
+    humidity = conditions$humidity[index])
   larval_habitat_area <- larval_habitat_area[index]
   
   # simulate the population
@@ -663,9 +733,12 @@ simulate_population <- function(
   colnames(states) <- c("aquatic", "adult")
   state <- initial_state
   
+  # pass int he daily aquatic survival function, as it is the only one that is
+  # dynamic (depends on the previous state, so introduces density dependence)
   for (t in seq_len(n)) {
     state <- iterate_state(state,
                            t = t,
+                           das_function = lifehistory_functions$das_function,
                            larval_habitat_area = larval_habitat_area,
                            water_temperature = water_temperature,
                            mdr = mdr,
@@ -716,19 +789,34 @@ summarise_dynamics <- function(states, surface_area_m2 = 10000) {
   
 }
 
-
-calculate_stephensi_suitability <- function(loc) {
+# given a single set of coordinates and a set of lifehistory functions (relating
+# microclimatic conditions to lifehistory parameters), return monthly
+# suitability measures for that species in all combinations of the
+# (micro)climate and larval habitat types
+calculate_suitability <- function(loc,
+                                  lifehistory_functions,
+                                  microclimates = c("habitat", "outside"),
+                                  larval_habitats = c("permanent", "ephemeral")) {
+  
+  # check the microclimates and larval habitats to model are valid options
+  if(!all(microclimates %in% c("habitat", "outside"))) {
+    stop("invalid microclimates specified")
+  }
+  
+  if(!all(larval_habitats %in% c("permanent", "ephemeral"))) {
+    stop("invalid larval habitats specified")
+  }
   
   # model the microclimates
   climatic_conditions <- model_climatic_conditions(loc)
   
   results <- list()
-  for (microclimate in c("habitat", "outside")) {
+  for (microclimate in microclimates) {
     
     # pull out the appropriate microclimatic conditions
     microclimate_conditions <- climatic_conditions[[microclimate]]
     
-    for (larval_habitat in c("permanent", "ephemeral")) {
+    for (larval_habitat in larval_habitats) {
     
       # compute the appropriate area of larval habitat  
       if (larval_habitat == "ephemeral") {
@@ -747,6 +835,7 @@ calculate_stephensi_suitability <- function(loc) {
       # and run the simulation
       population_states <- simulate_population(
         conditions = microclimate_conditions,
+        lifehistory_functions = lifehistory_functions,
         larval_habitat_area = larval_habitat_area)
       
       # summarise these, and enter into outputs
