@@ -412,9 +412,10 @@ fit_das_temp <- function(data,
     cbind(died, survived) ~ s(temperature),
     family = stats::binomial("cloglog"),
     offset = exposure_offset,
+    method = "REML",
     data = data_survival,
     # enforce extra smoothing to make this consistent with the others 
-    gamma = 20
+    gamma = ifelse(species == "An. gambiae", 2, 20)
   )
   
   if (plot_fit) {

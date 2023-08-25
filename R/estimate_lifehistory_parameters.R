@@ -39,8 +39,6 @@ data_villena <- load_villena_data()
 mdr_temp_As <- fit_mdr_temp(data_villena, species = "An. stephensi")
 mdr_temp_Ag <- fit_mdr_temp(data_villena, species = "An. gambiae")
 
-stop("MDR function for An gambiae fits data very poorly - try rerunning with sample size information")
-
 # EFD: eggs per female per day as a function of temperature
 efd_temp_As <- fit_efd_temp(data_villena, species = "An. stephensi")
 efd_temp_Ag <- fit_efd_temp(data_villena, species = "An. gambiae")
@@ -197,7 +195,7 @@ mortality_model <- lme4::glmer(
   cbind(died, survived) ~ 1 +
     # dummy for sex differences
     is_male +
-    # logit-linear effect of density
+    # linear effect of density on log hazard
     density +
     # random effect for the trial id (unique per replicate/condition
     # interaction)
@@ -256,9 +254,8 @@ das_temp_dens_Ag <- make_surv_temp_dens_function(
 
 # plot the survival model
 density_plotting <- expand_grid(
-  temperature = seq(0, 40, length.out = 100),
-  density = seq(0, 10, length.out = 100)
-  # species = c("An. stephensi", "An. gambiae")
+  temperature = seq(5, 40, length.out = 100),
+  density = seq(0, 7, length.out = 100)
 ) %>%
   rowwise() %>%
   mutate(
@@ -306,14 +303,17 @@ das_As_plot <- density_plotting %>%
   ) +
   coord_cartesian(
     ylim = c(0, 7),
-    xlim = c(5, 40)
   ) +
   scale_fill_discrete(type = cols) +
   theme_minimal() +
   theme(legend.position = "none") +
-  ggtitle("Daily survival probability of aquatic stages",
-          "of An. stephensi") +
-  ylab("Individuals per cm2") +
+  ggtitle(
+    "Daily survival probability of aquatic stages",
+    expression(italic("Anopheles stephensi"))
+  ) +
+  ylab(
+    expression(paste("Individuals per cm"^"2"))
+  ) +
   xlab("Temperature (C)")
 
 ggsave("figures/aquatic_survival_stephensi.png",
@@ -346,16 +346,20 @@ das_Ag_plot <- density_plotting %>%
     # label.placer = label_placer_n(3)
   ) +
   coord_cartesian(
-    ylim = c(0, 1.6),
-    xlim = c(0, 40)
+    ylim = c(0, 1.8)
   ) +
   scale_fill_discrete(type = cols) +
   theme_minimal() +
   theme(legend.position = "none") +
-  ggtitle("Daily survival probability of aquatic stages",
-          "of An. gambiae") +
-  ylab("Individuals per 250ml") +
+  ggtitle(
+    "Daily survival probability of aquatic stages",
+    expression(italic("Anopheles gambiae"))
+  ) +
+  ylab(
+    expression(paste("Individuals per cm"^"2"))
+  ) +
   xlab("Temperature (C)")
+
 
 # need to fix the low-temperature survival for An. gambiae
 ggsave("figures/aquatic_survival_gambiae.png",
@@ -363,8 +367,6 @@ ggsave("figures/aquatic_survival_gambiae.png",
        bg = "white",
        width = 5,
        height = 5)
-
-
 
 # model adult survival as a function of air temperature and humidity. Reanalyse
 # Bayoh data on an gambiae, include other data on longer-lived An gambiae, and
