@@ -4,6 +4,10 @@
 
 library(NicheMapR)
 library(tidyverse)
+library(tidyverse)
+library(terra)
+library(geodata)
+library(tidyterra)
 
 source("R/functions/micro_functions.R")
 
@@ -22,9 +26,7 @@ names(nichemapr_climate_raster_mask) <- "mask"
 # crop down to EMRO and AFRO regions
 
 # get a shapefile of the region of interest
-library(tidyverse)
-library(terra)
-library(geodata)
+
 world_country_shapes <- world(level = 0, path = "~/build")
 keep <- world_country_shapes$GID_0 %in% region_countries()
 region_country_shapes <- world_country_shapes[keep, ]
@@ -185,8 +187,12 @@ monthly_relative_abundance_agg <- replicate(12, region_raster_mask_agg, simplify
 names(monthly_relative_abundance_agg) <- month.name
 values(monthly_relative_abundance_agg) <- index$relative_abundance
 
+# save raster
+writeRaster(monthly_relative_abundance_agg,
+            file = "output/An_stephensi_mechanistic_abundance.tif",
+            overwrite = TRUE)
 
-
+# plot monthly
 ggplot() +
   geom_spatraster(
     data = monthly_relative_abundance_agg,
@@ -199,7 +205,7 @@ ggplot() +
     direction = 1,
     na.value = grey(0.9)
   ) +
-  labs(fill = "Relative\nabundance") +
+  labs(fill = "Climatic suitability") +
   theme_minimal() +
   theme(
     axis.text.x = element_blank(),
@@ -207,20 +213,40 @@ ggplot() +
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank()
   ) +
-  ggtitle("Predicted abundance of An. stephens per microclimate")
+  ggtitle("Predicted abundance of An. stephensi per larval habitat")
 
-ggsave("figures/mechanistic_suitability.png",
+ggsave("figures/monthly_mechanistic_suitability.png",
        bg = "white",
        width = 7,
        height = 7)
 
-# save raster
-writeRaster(monthly_relative_abundance_agg,
-            file = "output/An_stephensi_mechanistic_abundance.tif",
-            overwrite = TRUE)
+# combine all years and plot
+annual_relative_abundance_agg <- mean(monthly_relative_abundance_agg)
+
+ggplot() +
+  geom_spatraster(
+    data = annual_relative_abundance_agg,
+  ) +
+  scale_fill_distiller(
+    palette = "YlGnBu",
+    direction = 1,
+    na.value = grey(0.9)
+  ) +
+  labs(fill = "Climatic suitability") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  ggtitle("Predicted abundance of An. stephensi per larval habitat")
+
+ggsave("figures/mechanistic_suitability.png",
+       bg = "white",
+       width = 7,
+       height = 5)
 
 # to do:
 
 # run this for An gambiae and for An stephensi
-
-# output rasters with monthly estimates
