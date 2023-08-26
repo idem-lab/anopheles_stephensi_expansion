@@ -105,44 +105,25 @@ time_agg <- system.time(
     )
 )
 
-# time in minutes - 41 for aggregated
-# in parallel, 191 mins @ agg 4
-time_agg["elapsed"] / 60
+# time for unaggregated in parallel, ~9h 
+time_agg["elapsed"] / 360
 
-# 
-# # then run for An gambiae, non-microclimate, with ephemeral water
-# time_agg <- system.time(
-#   results_list_Ag <- sfLapply(
-#     coords_list,
-#     calculate_suitability,
-#     lifehistory_functions = lifehistory_functions_Ag,
-#     microclimates = "outside",
-#     larval_habitats = "ephemeral"
-#   )
-# )
-# 
-# time_agg["elapsed"] / 60
+
+# then run for An gambiae, non-microclimate, with ephemeral water
+time_agg <- system.time(
+  results_list_Ag <- sfLapply(
+    coords_list,
+    calculate_suitability,
+    lifehistory_functions = lifehistory_functions_Ag,
+    microclimates = "outside",
+    larval_habitats = "ephemeral"
+  )
+)
+
+# time in hours
+time_agg["elapsed"] / 360
 
 sfStop()
-
-# # look for the bad ones - could do this faster in parallel with a trycatch
-# for (i in seq_along(coords_list)) {
-#   print(i)
-#   tmp <- model_climatic_conditions(coords_list[[i]])
-# }
-# 
-# model_climatic_conditions(coords_list[[94]])
-
-# # site long 35.3333333333333 lat 32
-# 
-# dodgy <- which(near(coords_agg[valid_cells, "x"], 35.3333333333333) &
-#         near(coords_agg[valid_cells, "y"], 32))
-# # dodgy <- 2728
-# 
-# tmp <- calculate_stephensi_suitability(coords_list[[dodgy]])
-# 
-# nrow(coords_agg)
-
 
 
 # add on the index to the raster
@@ -166,13 +147,41 @@ results_As <- mapply(bind_cols,
     relative_abundance = relative_abundance / max(relative_abundance)
   )
 
+results_Ag <- mapply(bind_cols,
+                     index_list,
+                     results_list_Ag,
+                     # coords_list,
+                     SIMPLIFY = FALSE) %>%
+  bind_rows() %>%
+  `rownames<-`(NULL) %>%
+  select(
+    cell_index,
+    month,
+    relative_abundance
+  ) %>%
+  # scale relative abundance to have maximum value 1
+  mutate(
+    relative_abundance = relative_abundance / max(relative_abundance)
+  )
+
 # work out the index to insert the values
-index <- expand.grid(
+index_raw <- expand.grid(
   cell_index = seq_len(ncell(region_raster_mask_agg)),
   month = 1:12
-) %>%
+)
+index_As <- index_raw %>%
   left_join(
     results_As,
+    by = join_by(cell_index, month)
+  ) %>%
+  arrange(
+    month,
+    cell_index,
+  )
+
+index_Ag <- index_raw %>%
+  left_join(
+    results_Ag,
     by = join_by(cell_index, month)
   ) %>%
   arrange(
@@ -185,17 +194,27 @@ index <- expand.grid(
 monthly_relative_abundance_agg <- replicate(12, region_raster_mask_agg, simplify = FALSE) %>%
   do.call(c, .)
 names(monthly_relative_abundance_agg) <- month.name
-values(monthly_relative_abundance_agg) <- index$relative_abundance
 
-# save raster
-writeRaster(monthly_relative_abundance_agg,
+# copy for each species and fill with relevant values
+monthly_relative_abundance_agg_As <- monthly_relative_abundance_agg
+monthly_relative_abundance_agg_Ag <- monthly_relative_abundance_agg
+values(monthly_relative_abundance_agg_As) <- index_As$relative_abundance
+values(monthly_relative_abundance_agg_Ag) <- index_Ag$relative_abundance
+
+# save rasters
+writeRaster(monthly_relative_abundance_agg_As,
             file = "output/An_stephensi_mechanistic_abundance.tif",
             overwrite = TRUE)
 
-# plot monthly
+# save rasters
+writeRaster(monthly_relative_abundance_agg_Ag,
+            file = "output/An_gambiae_mechanistic_abundance.tif",
+            overwrite = TRUE)
+
+# plot monthly for An. stephensi
 ggplot() +
   geom_spatraster(
-    data = monthly_relative_abundance_agg,
+    data = monthly_relative_abundance_agg_As,
   ) +
   facet_wrap(~lyr,
              ncol = 3,
@@ -215,17 +234,47 @@ ggplot() +
   ) +
   ggtitle("Predicted abundance of An. stephensi per larval habitat")
 
-ggsave("figures/monthly_mechanistic_suitability.png",
+ggsave("figures/An_stephensi_monthly_mechanistic_suitability.png",
+       bg = "white",
+       width = 7,
+       height = 7)
+
+# plot monthly for An. gambiae
+ggplot() +
+  geom_spatraster(
+    data = monthly_relative_abundance_agg_Ag,
+  ) +
+  facet_wrap(~lyr,
+             ncol = 3,
+             nrow = 4) +
+  scale_fill_distiller(
+    palette = "YlGnBu",
+    direction = 1,
+    na.value = grey(0.9)
+  ) +
+  labs(fill = "Climatic suitability") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  ggtitle("Predicted abundance of An. gambiae per larval habitat")
+
+ggsave("figures/An_gambiae_monthly_mechanistic_suitability.png",
        bg = "white",
        width = 7,
        height = 7)
 
 # combine all years and plot
-annual_relative_abundance_agg <- mean(monthly_relative_abundance_agg)
+annual_relative_abundance_agg_As <- mean(monthly_relative_abundance_agg_As)
+annual_relative_abundance_agg_Ag <- mean(monthly_relative_abundance_agg_Ag)
 
+# plot annual summary for An. stephensi
 ggplot() +
   geom_spatraster(
-    data = annual_relative_abundance_agg,
+    data = annual_relative_abundance_agg_As,
   ) +
   scale_fill_distiller(
     palette = "YlGnBu",
@@ -242,11 +291,33 @@ ggplot() +
   ) +
   ggtitle("Predicted abundance of An. stephensi per larval habitat")
 
-ggsave("figures/mechanistic_suitability.png",
+ggsave("figures/An_stephensi_mechanistic_suitability.png",
        bg = "white",
        width = 7,
        height = 5)
 
-# to do:
+# and for An. gambiae
+ggplot() +
+  geom_spatraster(
+    data = annual_relative_abundance_agg_Ag,
+  ) +
+  scale_fill_distiller(
+    palette = "YlGnBu",
+    direction = 1,
+    na.value = grey(0.9)
+  ) +
+  labs(fill = "Climatic suitability") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  ggtitle("Predicted abundance of An. gambiae per larval habitat")
 
-# run this for An gambiae and for An stephensi
+ggsave("figures/An_gambiae_mechanistic_suitability.png",
+       bg = "white",
+       width = 7,
+       height = 5)
+
