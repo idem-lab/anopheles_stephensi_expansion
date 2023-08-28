@@ -677,15 +677,16 @@ ggsave("figures/lifehistory_adult_survival.png",
        width = 7,
        height = 5)
 
-# need to export the survival model as before
-
-
-
 
 # now we need to save these neatly to be loaded reused later, getting around all
 # the awkward lexical scoping stuff. Use dehydrate_lifehistory_function() and
 # rehydrate_lifehistory_function() to store and rejuvenate the functions as RDS
 # files, with all relevant objects included
+
+# warning: this code is currently pretty fragile to changes in this estimation,
+# as it relies on the dummy functions and parameter passing in
+# dehydrate_lifehistory_function() being updated to match the function being
+# dehydrated. So tread very carefully, and hopefully find a better solution.
 
 storage_path <- "data/life_history_params/dehydrated"
 
@@ -703,6 +704,7 @@ dehydrate_lifehistory_function(pea_temp_Ag, file.path(storage_path, "pea_temp_Ag
 dehydrate_lifehistory_function(das_temp_dens_As, file.path(storage_path, "das_temp_dens_As.RDS"))
 dehydrate_lifehistory_function(das_temp_dens_Ag, file.path(storage_path, "das_temp_dens_Ag.RDS"))
 
+# joint model fo adult survival
 # AS ~ temp + humidity + species
 dehydrate_lifehistory_function(ds_temp_humid, file.path(storage_path, "ds_temp_humid.RDS"))
 

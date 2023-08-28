@@ -559,7 +559,9 @@ make_surv_temp_dens_function <- function(surv_temp_function,
     }
   }
 
-  # return the appropriate function
+  # add an attribute to the function denoting the type of prediction, and return
+  # the appropriate function
+  attr(fun, "type") <- type
   fun
 
 }
@@ -570,7 +572,7 @@ dehydrate_lifehistory_function <- function(fun, path_to_object) {
   e <- environment(fun)
   
   # determine how to store the required components
-  if (identical(names(arguments), "temperature")) {
+  if(identical(names(arguments), "temperature")) {
     object <- list(
       arguments = arguments,
       temperature_function_raw = e$function_raw,
@@ -584,18 +586,43 @@ dehydrate_lifehistory_function <- function(fun, path_to_object) {
       }
     )
   } else if (identical(names(arguments), c("temperature", "density"))) {
-    object <- list(
-      arguments = arguments,
-      temperature_function_raw = e$surv_temp_function,
-      dd_effect = e$dd_effect,
-      dummy_function = function() {
+    # temperature and density-dependent effects: we need to handle the fact that
+    # there are two different functions being used
+    type <- attr(fun, "type")
+    if(type == "cox_ph") {
+      
+      dummy_function <- function() {
+        density_dish <- density * object$surface_area_cm2
         daily_mortality_zero_density <- 1 - object$temperature_function_raw(temperature)
         loghaz_mortality_zero_density <- log(-log(1 - daily_mortality_zero_density))
-        loghaz_mortality <- loghaz_mortality_zero_density + object$dd_effect * density
+        loghaz_mortality <- loghaz_mortality_zero_density +
+          object$dd_effect * density_dish
         daily_mortality <- 1 - exp(-exp(loghaz_mortality))
         1 - daily_mortality
       }
+      
+    } else if(type == "logit") {
+      
+      dummy_function <- function(temperature, density) {
+        density_dish <- density * object$surface_area_cm2
+        logit_daily_survival_zero_density <- qlogis(object$temperature_function_raw(temperature))
+        logit_daily_survival <- logit_daily_survival_zero_density +
+          object$dd_effect * density_dish
+        plogis(logit_daily_survival)
+      }
+
+    } else {
+      stop("unknown type of model")
+    }
+    
+    object <- list(
+      arguments = arguments,
+      surface_area_cm2 = e$surface_area_cm2,
+      temperature_function_raw = e$surv_temp_function,
+      dd_effect = e$dd_effect,
+      dummy_function = dummy_function
     )
+    
   } else if (identical(names(arguments), c("temperature", "humidity", "species"))) {
     object <- list(
       arguments = arguments,

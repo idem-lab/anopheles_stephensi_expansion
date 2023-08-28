@@ -106,7 +106,7 @@ time_agg <- system.time(
 )
 
 # time for unaggregated in parallel, ~9h 
-time_agg["elapsed"] / 360
+time_agg["elapsed"] / (60 * 60)
 
 
 # then run for An gambiae, non-microclimate, with ephemeral water
@@ -121,7 +121,7 @@ time_agg <- system.time(
 )
 
 # time in hours
-time_agg["elapsed"] / 360
+time_agg["elapsed"] / (60 * 60)
 
 sfStop()
 
@@ -133,7 +133,6 @@ index_list <- lapply(valid_cell_index, function(x) tibble(cell_index = x))
 results_As <- mapply(bind_cols,
                      index_list,
                      results_list_As,
-                     # coords_list,
                      SIMPLIFY = FALSE) %>%
   bind_rows() %>%
   `rownames<-`(NULL) %>%
@@ -144,13 +143,12 @@ results_As <- mapply(bind_cols,
   ) %>%
   # scale relative abundance to have maximum value 1
   mutate(
-    relative_abundance = relative_abundance / max(relative_abundance)
+    relative_abundance = relative_abundance / max(relative_abundance, na.rm = TRUE)
   )
 
 results_Ag <- mapply(bind_cols,
                      index_list,
                      results_list_Ag,
-                     # coords_list,
                      SIMPLIFY = FALSE) %>%
   bind_rows() %>%
   `rownames<-`(NULL) %>%
@@ -161,7 +159,7 @@ results_Ag <- mapply(bind_cols,
   ) %>%
   # scale relative abundance to have maximum value 1
   mutate(
-    relative_abundance = relative_abundance / max(relative_abundance)
+    relative_abundance = relative_abundance / max(relative_abundance, na.rm = TRUE)
   )
 
 # work out the index to insert the values
@@ -169,6 +167,7 @@ index_raw <- expand.grid(
   cell_index = seq_len(ncell(region_raster_mask_agg)),
   month = 1:12
 )
+
 index_As <- index_raw %>%
   left_join(
     results_As,
