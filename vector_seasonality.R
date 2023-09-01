@@ -2,7 +2,69 @@ library(dplyr)
 library(readr)
 library(tidyr)
 library(ggplot2)
-library()
+library(countrycode)
+
+
+# africa countries with A stephensi older records
+africa_countries <- function () {
+  c(
+    "AGO",
+    "BDI",
+    "BEN",
+    "BFA",
+    "BWA",
+    "CAF",
+    "CIV",
+    "CMR",
+    "COD",
+    "COG",
+    "COM",
+    "CPV",
+    "DJI",
+    "DZA",
+    "EGY",
+    "ERI",
+    "ESH",
+    "ETH",
+    "GAB",
+    "GHA",
+    "GIN",
+    "GMB",
+    "GNB",
+    "GNQ",
+    "KEN",
+    "LBR",
+    "LBY",
+    "LSO",
+    "MAR",
+    "MDG",
+    "MLI",
+    "MOZ",
+    "MRT",
+    "MUS",
+    "MWI",
+    "NAM",
+    "NER",
+    "NGA",
+    "RWA",
+    "SDN",
+    "SEN",
+    "SLE",
+    "SOM",
+    "SSD",
+    "STP",
+    "SWZ",
+    "TCD",
+    "TGO",
+    "TUN",
+    "TZA",
+    "UGA",
+    "ZAF",
+    "ZMB",
+    "ZWE"
+  )
+}
+
 
 ve_raw <- read_csv("data/tabular/vector_extraction_data.csv") %>%
   dplyr::select(
@@ -19,7 +81,7 @@ ve_raw <- read_csv("data/tabular/vector_extraction_data.csv") %>%
   )
 
 
-ve_raw %>%
+seasonality <- ve_raw %>%
   drop_na %>%
   filter(
     year_start %in% 1900:2015,
@@ -48,5 +110,48 @@ ve_raw %>%
   ) %>% 
   filter(survey_length <= 93) %>%
   mutate(
-    date = start + survey_length/2
+    date = start + survey_length/2,
+    month = month(date)
+  ) %>%
+  filter(
+    country %in% countrycode(
+      sourcevar = africa_countries(),
+      origin = "iso3c",
+      destination = "country.name"
+    )
   )
+
+
+
+ggplot(seasonality) +
+  geom_point(
+    aes(
+      x = month,
+      y = count,
+      colour = country
+    )
+  )
+
+ggplot(
+  seasonality
+) +
+  geom_point(
+    aes(
+      x = month,
+      y = count,
+      colour = country
+    )
+  ) +
+  geom_smooth(
+    aes(
+      x = month,
+      y = count,
+      colour = country
+    ),
+    method = "loess"
+  ) +
+  facet_wrap(
+    ~ country,
+    scales = "free"
+  )
+
