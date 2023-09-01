@@ -335,3 +335,10 @@ saveRDS(
       format("%Y%m%d")
   )
 )
+
+## look into VA database 
+# look at papers with heaps of data to use, pref spread around
+
+# format into the thing for the shekndkn 
+
+
