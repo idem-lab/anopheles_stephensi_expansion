@@ -366,54 +366,54 @@ built_c <- writereadrast(
 
 built_c
 
-ne <- c(
-  2.91081917173319,
-  10.1096654308828,
-  4.09070641282907,
-  9.19483132932854
-) %>%
-  ext # area of coastal Nigeria incl Lagos on SW
+# ne <- c(
+#   2.91081917173319,
+#   10.1096654308828,
+#   4.09070641282907,
+#   9.19483132932854
+# ) %>%
+#   ext # area of coastal Nigeria incl Lagos on SW
+# 
+# ne <- c(
+#   2.91081917173319,
+#   4,
+#   6.3,
+#   7
+# ) %>%
+#   ext # focus on lagos
 
-ne <- c(
-  2.91081917173319,
-  4,
-  6.3,
-  7
-) %>%
-  ext # focus on lagos
-
-plot(built_c$built_c_00_other)
-plot(built_c$built_c_00_other, ext = ne)
-plot(built_c$built_c_01_open_low)
-plot(built_c$built_c_01_open_low, ext = ne)
-plot(built_c$built_c_01_open_med)
-plot(built_c$built_c_02_open_med, ext = ne)
-plot(built_c$built_c_03_open_high)
-plot(built_c$built_c_03_open_high, ext = ne)
-plot(built_c$built_c_04_open_water)
-plot(built_c$built_c_04_open_water, ext = ne)
-plot(built_c$built_c_05_open_road)
-plot(built_c$built_c_05_open_road, ext = ne)
-plot(built_c$built_c_11_residential_0_3)
-plot(built_c$built_c_11_residential_0_3, ext = ne)
-plot(built_c$built_c_12_residential_3_6)
-plot(built_c$built_c_12_residential_3_6, ext = ne)
-plot(built_c$built_c_13_residential_6_15)
-plot(built_c$built_c_13_residential_6_15, ext = ne)
-plot(built_c$built_c_14_residential_15_30)
-plot(built_c$built_c_14_residential_15_30, ext = ne)
-plot(built_c$built_c_15_residential_30plus)
-plot(built_c$built_c_15_residential_30plus, ext = ne)
-plot(built_c$built_c_21_nonresidential_0_3)
-plot(built_c$built_c_21_nonresidential_0_3, ext = ne)
-plot(built_c$built_c_22_nonresidential_3_6)
-plot(built_c$built_c_22_nonresidential_3_6, ext = ne)
-plot(built_c$built_c_23_nonresidential_6_15)
-plot(built_c$built_c_23_nonresidential_6_15, ext = ne)
-plot(built_c$built_c_24_nonresidential_15_30)
-plot(built_c$built_c_24_nonresidential_15_30, ext = ne)
-plot(built_c$built_c_25_nonresidential_30plus)
-plot(built_c$built_c_25_nonresidential_30plus, ext = ne)
+# plot(built_c$built_c_00_other)
+# plot(built_c$built_c_00_other, ext = ne)
+# plot(built_c$built_c_01_open_low)
+# plot(built_c$built_c_01_open_low, ext = ne)
+# plot(built_c$built_c_01_open_med)
+# plot(built_c$built_c_02_open_med, ext = ne)
+# plot(built_c$built_c_03_open_high)
+# plot(built_c$built_c_03_open_high, ext = ne)
+# plot(built_c$built_c_04_open_water)
+# plot(built_c$built_c_04_open_water, ext = ne)
+# plot(built_c$built_c_05_open_road)
+# plot(built_c$built_c_05_open_road, ext = ne)
+# plot(built_c$built_c_11_residential_0_3)
+# plot(built_c$built_c_11_residential_0_3, ext = ne)
+# plot(built_c$built_c_12_residential_3_6)
+# plot(built_c$built_c_12_residential_3_6, ext = ne)
+# plot(built_c$built_c_13_residential_6_15)
+# plot(built_c$built_c_13_residential_6_15, ext = ne)
+# plot(built_c$built_c_14_residential_15_30)
+# plot(built_c$built_c_14_residential_15_30, ext = ne)
+# plot(built_c$built_c_15_residential_30plus)
+# plot(built_c$built_c_15_residential_30plus, ext = ne)
+# plot(built_c$built_c_21_nonresidential_0_3)
+# plot(built_c$built_c_21_nonresidential_0_3, ext = ne)
+# plot(built_c$built_c_22_nonresidential_3_6)
+# plot(built_c$built_c_22_nonresidential_3_6, ext = ne)
+# plot(built_c$built_c_23_nonresidential_6_15)
+# plot(built_c$built_c_23_nonresidential_6_15, ext = ne)
+# plot(built_c$built_c_24_nonresidential_15_30)
+# plot(built_c$built_c_24_nonresidential_15_30, ext = ne)
+# plot(built_c$built_c_25_nonresidential_30plus)
+# plot(built_c$built_c_25_nonresidential_30plus, ext = ne)
 
 
 ### GHS_SMOD
