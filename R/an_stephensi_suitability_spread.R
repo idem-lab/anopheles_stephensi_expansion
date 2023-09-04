@@ -11,6 +11,11 @@ library(dismo)
 
 # load data
 
+# load hexes and hex raster lookup
+hexes <- readRDS("output/hexes.RDS")
+hex_lookup <- rast("output/rasters/derived/hex_raster_lookup.tif")
+hex_lookup[hex_lookup == 0] <- NA
+
 # load pixel covariates
 mask <- rast("output/rasters/derived/mask.tif")
 larval_covs <- rast("output/rasters/derived/larval_habitat_covariates.tif")
@@ -26,15 +31,14 @@ first_detection <- readRDS("output/tabular/first_detection.RDS")
 
 # filter this to points within the study region, and within the climatic
 # suitability prediction
-vals <- terra::extract(climatic_rel_abund, first_detection[, 1:2])[, 2]
+climate_vals <- terra::extract(climatic_rel_abund, first_detection[, 1:2])[, 2]
+hex_vals <- terra::extract(hex_lookup, first_detection[, 1:2])[, 2]
 first_detection <- first_detection %>%
-  filter(is.finite(vals) & vals > 0)
+  filter(is.finite(hex_vals) & climate_vals > 0)
 
 # augment this with background points
-populated_mask <- populated
-populated_mask[populated_mask == 0] <- NA
 non_detection <- dismo::randomPoints(
-  mask = raster::raster(populated_mask),
+  mask = raster::raster(hex_lookup),
   n = 500,
   p = as.matrix(first_detection[, 1:2])) %>%
   as_tibble() %>%
@@ -51,7 +55,17 @@ detections <- bind_rows(
   non_detection,
   mutate(first_detection,
          background = 0)
-)
+) %>%
+  mutate(
+    id = terra::extract(hex_lookup,
+                        .[, 1:2],
+                        ID = FALSE)[, 1]
+  )
+
+# get all years
+years <- seq(min(detections$year_first_detected),
+             max(detections$year_first_detected))
+n_years <- length(years)
 
 # extract the values of the larval covariates at the points
 larval_covs_points <- terra::extract(larval_covs,
@@ -65,17 +79,6 @@ climatic_rel_abund_points <- terra::extract(climatic_rel_abund,
   as_tibble() %>%
   pull(mean)
 
-# load hexes and hex raster lookup
-hexes <- readRDS("output/hexes.RDS")
-hex_lookup <- rast("output/rasters/derived/hex_raster_lookup.tif")
-
-# extract the lookup between points and hexes, and add to the point data
-detections <- detections %>%
-  mutate(
-    id = terra::extract(hex_lookup,
-                        detections[, 1:2],
-                        ID = FALSE)[, 1]
-  )
 
 # aggregate the values of the covariates at the hex scale
 covs_continuous <- !names(larval_covs) %in% c("type", "cover")
@@ -84,6 +87,7 @@ larval_covs_continuous_hex <- terra::zonal(larval_covs[[covs_continuous]],
                                            fun = "mean",
                                            na.rm = TRUE) %>%
   as_tibble()
+
 larval_covs_discrete_hex <- terra::zonal(larval_covs[[!covs_continuous]],
                                            hex_lookup,
                                            fun = "modal",
@@ -109,6 +113,50 @@ climatic_rel_abund_hexes <- terra::zonal(
   fun = "mean") %>%
   as_tibble() %>%
   pull(mean)
+
+# load a dispersal matrix between hexes
+radiation_dispersal_raw <- readRDS("output/tabular/radiation_matrix.RDS")
+
+# create a lookup to the hex ids, to keep only those we use
+matrix_order <- tibble(
+  index = seq_len(nrow(radiation_dispersal_raw)),
+  h3_index = rownames(radiation_dispersal_raw)
+)
+
+matrix_index <- hexes %>%
+  left_join(
+    matrix_order,
+    by = "h3_index") %>% 
+  pull(index)
+
+n_hexes <- nrow(hexes)
+
+# subset, blank out diagonals, and relevel
+diagonal <- diag(nrow = n_hexes, ncol = n_hexes)
+unscaled_radiation_dispersal <- radiation_dispersal_raw[matrix_index, matrix_index]
+unscaled_radiation_dispersal <- unscaled_radiation_dispersal * (1 - diagonal)
+
+# make these columns sum to 1 to get probability of moving to each other patch
+# *if* they left
+radiation_dispersal <- sweep(unscaled_radiation_dispersal,
+                             1,
+                             colSums(unscaled_radiation_dispersal),
+                             FUN = "/")
+
+# probability of dispersion
+dispersal_fraction <- normal(0, 0.5, truncation = c(0, 1))
+
+# normalise these to have the overall probability of dispersing to that patch,
+# and add back the probability of remaining
+dispersal_matrix <- dispersal_fraction * radiation_dispersal + (1 - dispersal_fraction) * diagonal
+
+# # check this doesn't lead to population growth
+# colSums(calculate(dispersal_matrix, nsim = 1)[[1]][1, , ])
+# growth <- dispersal_matrix %*% (ones(n_hexes) / n_hexes) 
+# calculate(sum(growth), nsim = 1)[[1]][1, , ]
+
+
+# build model
 
 # note: we only need total K over a hex to model spread, so we could aggregate
 # from pixel level to hex level at each MCMC iteration (logsumexp(log_K) over
@@ -226,11 +274,9 @@ transition_function <- function(state, iter, log_R, M, dispersal_matrix) {
 
 library(greta.dynamics)
 
-n_times <- diff(range(detections$year_first_detected))
-
 iters <- iterate_dynamic_function(transition_function = transition_function,
                                   initial_state = initial_state,
-                                  niter = n_times,
+                                  niter = n_years,
                                   tol = 0,
                                   log_R = log_R_hex,
                                   M = M,
@@ -241,50 +287,49 @@ rel_abund_hex <- t(iters$all_states)
 log_rel_abund_hex <- log(rel_abund_hex)
 
 # convert these to log proportions of carrying capacities in those hexes
-log_prop_full_hex <- log_rel_abund_hex - log_K_hex
+log_prop_full_hex <- sweep(log_rel_abund_hex, 2, log_K_hex, FUN = "-")
 
 # multiply these by the pixel carrying capacities to get K there
 
 # hexes to points is an integer lookup giving the hexes to which each of the
 # points belong
-log_rel_abund_points <- log_K_points + log_prop_full_hex[hexes_to_points]
+log_prop_full_points <- log_prop_full_hex[, detections$id]
+log_rel_abund_points <- sweep(log_prop_full_points, 2, log_K_points, FUN = "+") 
 
 # now define a likelihood for the (right truncated) time to detection dataset
 
 # compute the relative probability of detection in a single year in a given
 # location (relative to a density of 1 mosquito)
 detection_probability <- normal(0, 0.1, truncation = c(0, 1))
-# compute the probability of detection in that place and year
-p_detect_annual <- 1 - exp(-rel_abund * detection_probability)
-# and the cumulative probability of detection
-p_detect_cumul <- apply(p_detect_annual, 1, "cumprob")
-
-# model the right-censored time to detection with a time-dependent cox
-# proportional hazards likelihood
 log_detection_probability <- log(detection_probability)
-log_hazard_annual <- log_rel_abund + log_detection_probability
-log_hazard_cumul <- apply(log_hazard_annual, 1, "cumsum")
-p_detect_cumul <- icloglog(log_hazard_cumul)
+# compute the probability of detection in that place and year
+p_detect_annual <- 1 - exp(-exp(log_rel_abund_points + log_detection_probability))
+# and the cumulative probability of detection
+p_detect_cumul <- 1 - t(apply(1 - p_detect_annual, 1, "cumprod"))
 
-# define the Bernoulli likelihood over these times to detection
-p_detect_annual <- 1 - exp(-exp(log_rel_abund + log_detection_probability))
+# can we model the right-censored time to detection with a time-dependent cox
+# proportional hazards likelihood to make this cumprod a cumsum?
 
+# extract the relevant element for the censored likelihood
+year_index <- match(detections$year_first_detected, years)
+obs_index <- cbind(year_index, seq_len(nrow(detections)))
 
+obs_prob <- p_detect_cumul[obs_index]
 
+distribution(detections$ever_detected) <- bernoulli(obs_prob)
 
+m <- model(coefs, dispersal_fraction, detection_probability, log_M)
 
-# change this to have occupancy calculated on the point level (augmented with
-# rangom background/integration points) - with the invasion process computed on
-# hexes. I.e. occupancy of suitable pixels depends only on the hexes to which
-# they belong.
+source("R/generate_valid_inits.R")
+library(tensorflow)
+n_chains <- 4
+inits <- generate_valid_inits(m, n_chains)
+draws <- mcmc(m,
+              chains = n_chains,
+              initial_values = inits)
 
-# currently the invasion process depends on K (suitability), which is calculated
-# as aggregated over all pixels.
-
-# use integration points to sum K over cells?
-
-
-
+coda::gelman.diag(draws, autoburnin = FALSE, multivariate = FALSE)
+plot(draws)
 
 
 
