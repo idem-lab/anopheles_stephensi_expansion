@@ -17,6 +17,10 @@ larval_covs <- rast("output/rasters/derived/larval_habitat_covariates.tif")
 populated <- rast("output/rasters/derived/populated_areas.tif")
 climatic_rel_abund <- rast("output/rasters/derived/climatic_rel_abund.tif")
 
+# add an epsilon to the climatic relative abundance to avoid 0 abundances later
+climatic_rel_abund <- climatic_rel_abund + .Machine$double.eps
+climatic_rel_abund <- mask(climatic_rel_abund, mask)
+
 # An. stephensi presence, absence, and years of detection
 first_detection <- readRDS("output/tabular/first_detection.RDS")
 
@@ -27,12 +31,15 @@ first_detection <- first_detection %>%
   filter(is.finite(vals) & vals > 0)
 
 # augment this with background points
+populated_mask <- populated
+populated_mask[populated_mask == 0] <- NA
 non_detection <- dismo::randomPoints(
-  mask = raster::raster(climatic_rel_abund),
+  mask = raster::raster(populated_mask),
   n = 500,
   p = as.matrix(first_detection[, 1:2])) %>%
   as_tibble() %>%
   mutate(
+    native = FALSE,
     year_first_detected = max(first_detection$year_first_detected),
     ever_detected = 0,
     background = 1
@@ -45,36 +52,69 @@ detections <- bind_rows(
   mutate(first_detection,
          background = 0)
 )
-# 
-# plot(populated)
-# points(detections,
-#        pch = 21,
-#        cex = 1,
-#        bg = 1 - detections$background)
 
-# load hexes
+# extract the values of the larval covariates at the points
+larval_covs_points <- terra::extract(larval_covs,
+                                     detections[, 1:2],
+                                     ID = FALSE) %>%
+  as_tibble()
+
+climatic_rel_abund_points <- terra::extract(climatic_rel_abund,
+                                     detections[, 1:2],
+                                     ID = FALSE) %>%
+  as_tibble() %>%
+  pull(mean)
+
+# load hexes and hex raster lookup
 hexes <- readRDS("output/hexes.RDS")
+hex_lookup <- rast("output/rasters/derived/hex_raster_lookup.tif")
 
+# extract the lookup between points and hexes, and add to the point data
+detections <- detections %>%
+  mutate(
+    id = terra::extract(hex_lookup,
+                        detections[, 1:2],
+                        ID = FALSE)[, 1]
+  )
 
+# aggregate the values of the covariates at the hex scale
+covs_continuous <- !names(larval_covs) %in% c("type", "cover")
+larval_covs_continuous_hex <- terra::zonal(larval_covs[[covs_continuous]],
+                                           hex_lookup,
+                                           fun = "mean",
+                                           na.rm = TRUE) %>%
+  as_tibble()
+larval_covs_discrete_hex <- terra::zonal(larval_covs[[!covs_continuous]],
+                                           hex_lookup,
+                                           fun = "modal",
+                                           na.rm = TRUE) %>%
+  as_tibble()
 
-# aggregate the values of these covariates at the hex scale
+larval_covs_hex <- larval_covs_continuous_hex %>%
+  left_join(larval_covs_discrete_hex,
+            by = "id")
+hex_order <- larval_covs_hex %>%
+  pull(id)
 
+larval_covs_hex <- larval_covs_hex %>%
+  dplyr::select(-id)
+
+# force the same order
+larval_covs_hex <- larval_covs_hex[, names(larval_covs_points)]
+
+# extract the climatic relative abundances too
+climatic_rel_abund_hexes <- terra::zonal(
+  x = climatic_rel_abund,
+  z = hex_lookup,
+  fun = "mean") %>%
+  as_tibble() %>%
+  pull(mean)
 
 # note: we only need total K over a hex to model spread, so we could aggregate
 # from pixel level to hex level at each MCMC iteration (logsumexp(log_K) over
 # pixels in each hex), but for a prototype, just do the ecological fallacy thing
-# and calculate summary stats for covariates over all urban-ish areas within a hex
-
-log_climatic_suitability <- ?
-larval_habitat_covs <- ?
-
-
-
-plot(landcover)
-
-
-
-
+# and calculate summary stats for covariates over all urban-ish areas within a
+# hex, and model with those
 
 # build up a pixel-level model for the carrying capacity for An. stephensi
 
@@ -93,16 +133,25 @@ plot(landcover)
 # model the relative density of larval habitats (note the intercept term here
 # controls the absolute value of K, so remove it to make it relative and control
 # that instead in the observation probabilities)
-larval_habitat_formula <- ~ -1 + built_env + pop + aridity
-larval_habitat_cov_matrix <- model.matrix(larval_habitat_formula,
-                                          data = larval_habitat_covs)
-n_coefs <- ncol(larval_habitat_cov_matrix)
-coefs <- normal(0, 1, dim = n_coefs)
-log_larval_habitat_density <- cov_matrix %*% coefs
+larval_hab_formula <- ~ -1 + built_volume + pop
 
-# get the carrying capacity
-log_K <- log_climatic_suitability + log_larval_habitat_density
-K <- exp(log_K)
+# extract for both points and hexes
+larval_hab_cov_points <- model.matrix(larval_hab_formula,
+                                      data = larval_covs_points)
+larval_hab_cov_hex <- model.matrix(larval_hab_formula,
+                                      data = larval_covs_hex)
+n_coefs <- ncol(larval_hab_cov_points)
+coefs <- normal(0, 1, dim = n_coefs)
+
+# get log densities for points and hexes
+log_larval_hab_points <- larval_hab_cov_points %*% coefs
+log_larval_hab_hex <- larval_hab_cov_hex %*% coefs
+
+# get the carrying capacity at hex and point scale
+log_K_hex <- log(climatic_rel_abund_hexes) + log_larval_hab_hex
+log_K_points <- log(climatic_rel_abund_points) + log_larval_hab_points
+K_hex <- exp(log_K_hex)
+K_points <- exp(log_K_points)
 
 # define the density-dependence scaling parameter M, expected to be positive,
 # so a standard lognormal; with a prior median of 1
@@ -110,15 +159,34 @@ log_M <- normal(0, 1)
 M <- exp(log_M)
 
 # compute the log-intrinsic growth rate from this
-log_R <- log1pe(log_K - log_M)
+log_R_hex <- log1pe(log_K_hex - log_M)
 
 # set an initial vector population state in these locations, at or near carrying
 # capacity in native range, and at some minimal level in other areas (note that
 # masking with 0s broke the model gradients, for reasons I don't fully
 # understand)
+# for all hexes, find out whether they contain at least one 'native range' point
+native_range_lookup <- detections %>%
+  group_by(id) %>%
+  summarise(
+    native = any(native)
+  ) %>%
+  right_join(
+    tibble(
+      id = hex_order),
+    by = "id"
+  ) %>%
+  arrange(
+    id
+  ) %>%
+  mutate(
+    native = replace_na(native, FALSE)
+  )
+native_range_lookup <- native_range_lookup[match(native_range_lookup$id, hex_order),]
+in_native_range <- native_range_lookup$native
 eps <- sqrt(.Machine$double.eps)
-native_range_mask <- ifelse(df$in_native_range, 1, eps)
-initial_state <- K * native_range_mask
+native_range_mask <- ifelse(in_native_range, 1, eps)
+initial_state <- K_hex * native_range_mask
 
 
 # define the function to iterate dynamics
@@ -158,11 +226,13 @@ transition_function <- function(state, iter, log_R, M, dispersal_matrix) {
 
 library(greta.dynamics)
 
+n_times <- diff(range(detections$year_first_detected))
+
 iters <- iterate_dynamic_function(transition_function = transition_function,
                                   initial_state = initial_state,
                                   niter = n_times,
                                   tol = 0,
-                                  log_R = log_R,
+                                  log_R = log_R_hex,
                                   M = M,
                                   dispersal_matrix = dispersal_matrix)
 
