@@ -22,13 +22,19 @@ plot(region_hex)
 populated <- rast("output/rasters/covariates/populated.grd")
 
 
+populated_agg <- aggregate(
+  x = populates,
+  fact = 5,
+  fun = "any"
+)
+
 # convert hexes to raster of this population
 hexvec <- vect(region_hex) #%>%
   #terra::project("EPSG:4326")
 
 # check if each area is populated
 region_hex_pop <- terra::zonal(
-  populated,
+  populated_agg,
   hexvec,
   fun = sum,
   na.rm=TRUE
@@ -38,6 +44,8 @@ region_hex_pop <- terra::zonal(
 
 populated_hexes <- region_hex[!is.nan(region_hex_pop[,1]),]
 plot(populated_hexes)
-region_hex_pop <- region_hex_pop[!is.nan(region_hex_pop[,1]),]
 
 
+saveRDS(
+  populated_hexes
+)
