@@ -314,10 +314,13 @@ bg_moz_many <- maskpointsdf(
   msk = covmask
 )
 
-plot(covmask)
+
+png("output/figures/bg_points.png")
+plot(covmask, col = "palegreen")
 points(vect(bg_ani))
 points(vect(bg_moz_many), col = "grey60")
 points(vect(bg_moz_best), col = "orange")
+dev.off()
 
 # save
 saveRDS(
