@@ -251,14 +251,8 @@ gbif_moz  <- occ_download(
     pred("taxonKey", 1650098), # Anopheles
     pred("taxonKey", 1497010) # Culex
   ),
-  #pred_in('basisOfRecord',
-  #        c("MACHINE_OBSERVATION", "HUMAN_OBSERVATION")),
   pred_in('country', bg_countries_2),
-  #pred('hasGeospatialIssue', "FALSE"),
-  #pred('occurrenceStatus', "PRESENT"),
   pred("hasCoordinate", TRUE),
-  #pred_lt("coordinateUncertaintyInMeters",1000),
-  #pred_gte('year', 2000),
   format = "SIMPLE_CSV"
 )
 
@@ -305,6 +299,8 @@ bg_moz_many_raw <- bg_moz_gbif_raw %>%
   ) %>%
   distinct
 
+
+# mask to land in area of interest
 bg_moz_best <- maskpointsdf(
   df = bg_moz_best_raw,
   msk = covmask
@@ -320,7 +316,7 @@ points(vect(bg_ani))
 points(vect(bg_moz_many), col = "grey60")
 points(vect(bg_moz_best), col = "orange")
 
-
+# save
 saveRDS(
   bg_moz_best,
   sprintf(
@@ -338,10 +334,5 @@ saveRDS(
       format("%Y%m%d")
   )
 )
-
-## look into VA database 
-# look at papers with heaps of data to use, pref spread around
-
-# format into the thing for the shekndkn 
 
 
