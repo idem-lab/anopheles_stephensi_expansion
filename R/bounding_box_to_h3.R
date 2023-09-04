@@ -25,7 +25,7 @@ get_h3_from_sf <- function(
   region_hex <- h3::h3_to_geo_boundary_sf(region_hex)
   
   # fix hex poly projections
-  region_hex <- sf::st_transform(region_hex,crs = h3_projection)
+  region_hex <- sf::st_transform(region_hex,crs = h3_crs_to)
   
   return(region_hex)
   
