@@ -2,7 +2,6 @@ library(dplyr)
 library(terra)
 library(sf)
 library(h3) #remotes::install_github("crazycapivara/h3-r")
-#library(movement)
 
 sapply(
   list.files("R/functions", full.names = TRUE),
@@ -16,36 +15,31 @@ source("R/bounding_box.R")
 region_hex <- get_h3_from_sf(
   sf_object = st_as_sf(region_shape_buffer))
 
-plot(region_hex)
+# filter to only hexes populated areas 
+populated <- rast("output/rasters/derived/populated_areas.tif")
 
-# get regions with significant populations 
-populated <- rast("output/rasters/covariates/populated.grd")
+hexes <- region_hex %>%
+  sf::st_transform(crs(populated)) %>%
+  mutate(
+    pop = terra::extract(populated, ., fun = "sum", na.rm = TRUE)[, 2]
+  ) %>%
+  filter(
+    pop > 0
+  ) %>%
+  mutate(
+    id = match(h3_index, unique(h3_index))
+  ) %>%
+  select(
+    -pop
+  )
 
+# mask by populated area to make the raster need for zonal stats calculations
+hex_raster <- rasterize(hexes,
+                        populated,
+                        field = "id",
+                        fun = min)
 
-populated_agg <- aggregate(
-  x = populated,
-  fact = 5,
-  fun = "any"
-)
+hex_raster <- hex_raster * populated
 
-# convert hexes to raster of this population
-hexvec <- vect(region_hex) #%>%
-  #terra::project("EPSG:4326")
-
-# check if each area is populated
-region_hex_pop <- terra::zonal(
-  populated_agg,
-  hexvec,
-  fun = sum,
-  na.rm=TRUE
-)
-
-#subsets to those with finite population count
-
-populated_hexes <- region_hex[!is.nan(region_hex_pop[,1]),]
-plot(populated_hexes)
-
-
-saveRDS(
-  populated_hexes
-)
+writeRaster(hex_raster, "output/rasters/derived/hex_raster_lookup.tif")
+saveRDS(hexes, "output/hexes.RDS")
