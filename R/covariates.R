@@ -943,8 +943,38 @@ covs <- writereadrast(
 )
 
 
-# 
+##### populated area based on smod
+smod <- rast("output/rasters/covariates/smod.grd")
 
+smod_lookup <- tribble(
+  ~value, ~category,
+  30, "URBAN CENTRE",
+  23, "DENSE URBAN CLUSTER",
+  22, "SEMI-DENSE URBAN CLUSTER",
+  21, "SUBURBAN OR PERI-URBAN",
+  13, "RURAL CLUSTER",
+  12, "LOW DENSITY RURAL",
+  11, "VERY LOW DENSITY RURAL",
+  10, "WATER"
+) %>%
+  as.data.frame()
+
+levels(smod) <- smod_lookup
+
+populated <- smod %in% c("URBAN CENTRE",
+                         "DENSE URBAN CLUSTER",
+                         "SEMI-DENSE URBAN CLUSTER",
+                         "SUBURBAN OR PERI-URBAN",
+                         "RURAL CLUSTER",
+                         "LOW DENSITY RURAL")
+
+populated <- mask(populated, covmask)
+writeRaster(
+  populated,
+  "output/rasters/covariates/populated.grd"
+)
+
+# 
 covmask <- rast("output/rasters/covariates/covmask.grd")
 covs <- rast("output/rasters/covariates/covs.grd")
 covs_continuous <- rast("output/rasters/covariates/covs_continuous.grd")
@@ -967,3 +997,4 @@ tcb <- rast("output/rasters/covariates/tcb.grd")
 tcw <- rast("output/rasters/covariates/tcw.grd")
 pop <- rast("output/rasters/covariates/pop.grd")
 
+populated <- rast("output/rasters/covariates/populated.grd")
