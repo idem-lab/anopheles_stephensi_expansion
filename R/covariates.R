@@ -191,15 +191,36 @@ evi
 # # The pixel classification criteria are available in the
 # # supporting data package PDF.
 # 
-# ghs_smod <- rast("data/MAP_covariates/GHSL_old/GHS_SMOD_R19A_v2.2015.Annual.Data.1km.Data.tif")
-# 
-# names(ghs_smod) <- "ghs_smod"
-# 
-# ghs_smod <- mask(ghs_smod, covmask)
-# 
-# ghs_smod
-# 
-# # plot(ghs_smod)
+ghs_smod <- rast("data/MAP_covariates/GHSL_old/GHS_SMOD_R19A_v2.2015.Annual.Data.1km.Data.tif")
+
+names(ghs_smod) <- "ghs_smod"
+
+smod <- mask(ghs_smod, covmask)
+
+smod_lookup <- tribble(
+  ~value, ~category,
+  30, "URBAN CENTRE",
+  23, "DENSE URBAN CLUSTER",
+  22, "SEMI-DENSE URBAN CLUSTER",
+  21, "SUBURBAN OR PERI-URBAN",
+  13, "RURAL CLUSTER",
+  12, "LOW DENSITY RURAL",
+  11, "VERY LOW DENSITY RURAL",
+  10, "WATER"
+) %>%
+  as.data.frame()
+
+levels(smod) <- smod_lookup
+
+smod
+
+smod <- writeRaster(
+  smod,
+  "output/rasters/covariates/smod.tif"
+)
+
+smod <- rast("output/rasters/covariates/smod.tif")
+# plot(smod)
 
 ## GHSL 2023
 
@@ -460,7 +481,7 @@ smod
 # from the 500m original datasets.
 # 
 # IGBP Landcover Classes:
-#   00 Unclassified
+# 00 Unclassified
 # 01 Evergreen_Needleleaf_Forest
 # 02 Evergreen_Broadleaf_Forest
 # 03 Deciduous_Needleleaf_Forest
@@ -503,11 +524,42 @@ landcover_names <- names(landcover) %>%
 
 names(landcover) <- landcover_names
 
+landcover_lookup <- tibble::tribble(
+  ~value, ~category,
+  00, "Unclassified",
+  01, "Evergreen_Needleleaf_Forest",
+  02, "Evergreen_Broadleaf_Forest",
+  03, "Deciduous_Needleleaf_Forest",
+  04, "Deciduous_Broadleaf_Forest",
+  05, "Mixed_Forest",
+  06, "Closed_Shrublands",
+  07, "Open_Shrublands",
+  08, "Woody_Savannas",
+  09, "Savannas",
+  10, "Grasslands",
+  11, "Permanent_Wetlands",
+  12, "Croplands",
+  13, "Urban_And_Built_Up",
+  14, "Cropland_Natural_Vegetation_Mosaic",
+  15, "Snow_And_Ice",
+  16, "Barren_Or_Sparsely_Populated",
+  17, "Water"
+) %>%
+  as.data.frame()
+
+levels(landcover$landcover_2015) <- landcover_lookup
+levels(landcover$landcover_2016) <- landcover_lookup
+levels(landcover$landcover_2017) <- landcover_lookup
+levels(landcover$landcover_2018) <- landcover_lookup
+levels(landcover$landcover_2019) <- landcover_lookup
+levels(landcover$landcover_2020) <- landcover_lookup
+
 landcover <- terra::mask(landcover, covmask)
 
-landcover <- writereadrast(
+landcover <- writeRaster(
   landcover,
-  "output/rasters/covariates/landcover.grd"
+  "output/rasters/covariates/landcover.tif",
+  overwrite = TRUE
 )
 
 landcover
@@ -944,22 +996,7 @@ covs <- writereadrast(
 
 
 ##### populated area based on smod
-smod <- rast("output/rasters/covariates/smod.grd")
-
-smod_lookup <- tribble(
-  ~value, ~category,
-  30, "URBAN CENTRE",
-  23, "DENSE URBAN CLUSTER",
-  22, "SEMI-DENSE URBAN CLUSTER",
-  21, "SUBURBAN OR PERI-URBAN",
-  13, "RURAL CLUSTER",
-  12, "LOW DENSITY RURAL",
-  11, "VERY LOW DENSITY RURAL",
-  10, "WATER"
-) %>%
-  as.data.frame()
-
-levels(smod) <- smod_lookup
+smod <- rast("output/rasters/covariates/smod.tif")
 
 populated <- smod %in% c("URBAN CENTRE",
                          "DENSE URBAN CLUSTER",
@@ -969,10 +1006,13 @@ populated <- smod %in% c("URBAN CENTRE",
                          "LOW DENSITY RURAL")
 
 populated <- mask(populated, covmask)
+
 writeRaster(
   populated,
-  "output/rasters/covariates/populated.grd"
+  "output/rasters/covariates/populated.tif"
 )
+
+populated <- rast("output/rasters/covariates/populated.tif")
 
 # 
 covmask <- rast("output/rasters/covariates/covmask.grd")
@@ -987,8 +1027,8 @@ built_height <- rast("output/rasters/covariates/built_height.grd")
 built_surface <- rast("output/rasters/covariates/built_surface.grd")
 built_volume <- rast("output/rasters/covariates/built_volume.grd")
 built_c <- rast("output/rasters/covariates/built_c.grd")
-smod <- rast("output/rasters/covariates/smod.grd")
-landcover <- rast("output/rasters/covariates/landcover.grd")
+smod <- rast("output/rasters/covariates/smod.tif")
+landcover <- rast("output/rasters/covariates/landcover.tif")
 lst_day <- rast("output/rasters/covariates/lst_day.grd")
 lst_night <- rast("output/rasters/covariates/lst_night.grd")
 nighttimelights <- rast("output/rasters/covariates/nighttimelights.grd")
@@ -997,4 +1037,4 @@ tcb <- rast("output/rasters/covariates/tcb.grd")
 tcw <- rast("output/rasters/covariates/tcw.grd")
 pop <- rast("output/rasters/covariates/pop.grd")
 
-populated <- rast("output/rasters/covariates/populated.grd")
+populated <- rast("output/rasters/covariates/populated.tif")
