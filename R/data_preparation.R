@@ -20,7 +20,8 @@ pa_data <- mtm_raw %>%
     # ), # something sus going on
     year = YEAR_START,
     presence = if_else(INVASIVE_STATUS == "not found", 0, 1), # either listed as "invasive", or "native" if present, or "not found" if absent
-    presence = if_else(is.na(presence), 1, presence)
+    presence = if_else(is.na(presence), 1, presence),
+    native = INVASIVE_STATUS == "native"
   ) %>%
   select(
     #date,
@@ -30,7 +31,8 @@ pa_data <- mtm_raw %>%
     y = LATITUDE,
     stage = STAGE,
     method = SAMPLING_METHOD,
-    breeding_habitat = BREEDING_HABITAT
+    breeding_habitat = BREEDING_HABITAT,
+    native
   ) %>% 
   mutate(
     x = as.numeric(x),
@@ -53,7 +55,7 @@ min_year <- min(pa_data$year, na.rm = TRUE) # 1984
 max_year <- max(pa_data$year, na.rm = TRUE) # 2022
 
 first_detection <- pa_data %>%
-  select(x, y, year, presence) %>%
+  select(x, y, year, presence, native) %>%
   mutate(
     year = if_else(is.na(year), min_year, year) # number of presen ces in India, Pakistan, Iran have no dates, assign as first year
   ) %>%
@@ -61,6 +63,7 @@ first_detection <- pa_data %>%
   summarise(
     presence = sum(presence),
     year = min(year),
+    native = native[1],
     .groups = "drop"
   ) %>%
   mutate(
@@ -70,6 +73,7 @@ first_detection <- pa_data %>%
   select(
     x,
     y,
+    native,
     year_first_detected,
     ever_detected 
   ) %>% 
