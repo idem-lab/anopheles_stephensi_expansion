@@ -206,12 +206,12 @@ monthly_relative_abundance_agg_Ag <- mask(monthly_relative_abundance_agg_Ag, reg
 
 # save rasters
 writeRaster(monthly_relative_abundance_agg_As,
-            file = "output/An_stephensi_mechanistic_abundance.tif",
+            file = "output/rasters/derived/An_stephensi_mechanistic_abundance.tif",
             overwrite = TRUE)
 
 # save rasters
 writeRaster(monthly_relative_abundance_agg_Ag,
-            file = "output/An_gambiae_mechanistic_abundance.tif",
+            file = "output/rasters/derived/An_gambiae_mechanistic_abundance.tif",
             overwrite = TRUE)
 
 # plot monthly for An. stephensi
