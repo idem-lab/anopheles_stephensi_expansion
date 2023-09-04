@@ -11,60 +11,60 @@ source("R/functions/maskpointsdf.R")
 # africa countries with A stephensi older records
 africa_countries <- function () {
   c(
-    # "AGO",
-    # "BDI",
-    # "BEN",
-    # "BFA",
-    # "BWA",
-    # "CAF",
-    # "CIV",
-    # "CMR",
-    # "COD",
-    # "COG",
-    # "COM",
-    # "CPV",
+    "AGO",
+    "BDI",
+    "BEN",
+    "BFA",
+    "BWA",
+    "CAF",
+    "CIV",
+    "CMR",
+    "COD",
+    "COG",
+    "COM",
+    "CPV",
     "DJI",
-    # "DZA",
-    # "EGY",
-    # "ERI",
-    # "ESH",
+    "DZA",
+    "EGY",
+    "ERI",
+    "ESH",
     "ETH",
-    # "GAB",
-    # "GHA",
-    # "GIN",
-    # "GMB",
-    # "GNB",
-    # "GNQ",
-    # "KEN",
-    # "LBR",
-    # "LBY",
-    # "LSO",
-    # "MAR",
-    # "MDG",
-    # "MLI",
-    # "MOZ",
-    # "MRT",
-    # "MUS",
-    # "MWI",
-    # "NAM",
-    # "NER",
-    # "NGA",
-    # "RWA",
-    # "SDN",
-    # "SEN",
-    # "SLE",
-    # "SOM",
-    "SSD"#,
-    # "STP",
-    # "SWZ",
-    # "TCD",
-    # "TGO",
-    # "TUN",
-    # "TZA",
-    # "UGA",
-    # "ZAF",
-    # "ZMB",
-    # "ZWE"
+    "GAB",
+    "GHA",
+    "GIN",
+    "GMB",
+    "GNB",
+    "GNQ",
+    "KEN",
+    "LBR",
+    "LBY",
+    "LSO",
+    "MAR",
+    "MDG",
+    "MLI",
+    "MOZ",
+    "MRT",
+    "MUS",
+    "MWI",
+    "NAM",
+    "NER",
+    "NGA",
+    "RWA",
+    "SDN",
+    "SEN",
+    "SLE",
+    "SOM",
+    "SSD",
+    "STP",
+    "SWZ",
+    "TCD",
+    "TGO",
+    "TUN",
+    "TZA",
+    "UGA",
+    "ZAF",
+    "ZMB",
+    "ZWE"
   )
 }
 
@@ -181,28 +181,29 @@ tibble(
 # only needs to be run once, after this can just download per
 # code below with occ_download_get
 
-# gbif_data  <- occ_download(
-#   pred('taxonKey', 1),
-#   pred_in('basisOfRecord',
-#           c("MACHINE_OBSERVATION", "HUMAN_OBSERVATION")),
-#   pred_in('country', bg_countries_2),
-#   pred('hasGeospatialIssue', "FALSE"),
-#   pred('occurrenceStatus', "PRESENT"),
-#   pred("hasCoordinate", TRUE),
-#   pred_lt("coordinateUncertaintyInMeters",1000),
-#   pred_gte('year', 2010),
-#   format = "SIMPLE_CSV"
-# )
-# gbif_data
+gbif_data  <- occ_download(
+  pred('taxonKey', 1),
+  pred_in('basisOfRecord',
+          c("MACHINE_OBSERVATION", "HUMAN_OBSERVATION")),
+  pred_in('country', bg_countries_2),
+  pred('hasGeospatialIssue', "FALSE"),
+  pred('occurrenceStatus', "PRESENT"),
+  pred("hasCoordinate", TRUE),
+  pred_lt("coordinateUncertaintyInMeters",1000),
+  pred_gte('year', 2010),
+  format = "SIMPLE_CSV"
+)
+
+gbif_data
 # 
-# occ_download_wait('0011641-230810091245214', curlopts=list(http_version=2))
+# occ_download_wait('0005642-230828120925497', curlopts=list(http_version=2))
 # re curlopts seems to be necessary possibly only on mac:
 # https://github.com/ropensci/rgbif/issues/579
 
 
-gbif_citation("0011641-230810091245214")
+gbif_citation("0005642-230828120925497")
 
-bg_ani_gbif_raw <- occ_download_get('0011641-230810091245214') %>%
+bg_ani_gbif_raw <- occ_download_get('0005642-230828120925497') %>%
   occ_download_import() %>% 
   write_csv(
     sprintf(
@@ -263,9 +264,11 @@ gbif_moz  <- occ_download(
 
 gbif_moz
 
-occ_download_wait('0011856-230810091245214', curlopts=list(http_version=2))
+occ_download_wait('0005643-230828120925497', curlopts=list(http_version=2))
 
-bg_moz_gbif_raw <- occ_download_get('0011856-230810091245214') %>%
+gbif_citation("0005643-230828120925497")
+
+bg_moz_gbif_raw <- occ_download_get('0005643-230828120925497') %>%
   occ_download_import() %>% 
   write_csv(
     sprintf(
