@@ -23,7 +23,7 @@ populated <- rast("output/rasters/covariates/populated.grd")
 
 
 populated_agg <- aggregate(
-  x = populates,
+  x = populated,
   fact = 5,
   fun = "any"
 )
