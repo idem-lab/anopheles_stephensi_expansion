@@ -200,6 +200,10 @@ monthly_relative_abundance_agg_Ag <- monthly_relative_abundance_agg
 values(monthly_relative_abundance_agg_As) <- index_As$relative_abundance
 values(monthly_relative_abundance_agg_Ag) <- index_Ag$relative_abundance
 
+# fill in NAs for unsuitable areas for An gambiae
+monthly_relative_abundance_agg_Ag[is.na(monthly_relative_abundance_agg_Ag)] <- 0
+monthly_relative_abundance_agg_Ag <- mask(monthly_relative_abundance_agg_Ag, region_raster_mask_agg)
+
 # save rasters
 writeRaster(monthly_relative_abundance_agg_As,
             file = "output/An_stephensi_mechanistic_abundance.tif",
