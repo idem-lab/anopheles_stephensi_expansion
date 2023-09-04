@@ -3,17 +3,21 @@
 library(tidyverse)
 library(readr); library(sf); library(terra); library(maptools); library(movement); library(geodata); library(h3);library(reshape2)
 
+
 #get wopr for all countries
 
-global.pop <- rast("data/WorldPop_UNAdj_v3_DRC_fix.2020.Annual.Data.1km.Data.tif")
+global.pop <- rast("output/rasters/covariates/pop.grd")[["pop_2020"]]
+# global.pop <- rast("data/WorldPop_UNAdj_v3_DRC_fix.2020.Annual.Data.1km.Data.tif")
 
 global.pop <- terra::aggregate(global.pop,
                                fact = 100,
-                               fun="sum")
+                               fun="sum",
+                               na.rm = TRUE)
 
 global.pop <- terra::project(global.pop,"ESRI:102022")
 plot(global.pop)
 #get the polygons we want
+library(h3)
 source("R/bounding_box_to_h3.R")
 
 #make a spat vect version for calculating sum of pop
@@ -49,6 +53,7 @@ movement_matrix <- sweep(predicted_flux$movement_matrix,
                          colSums(predicted_flux$movement_matrix),
                          FUN = "/")
 
+
 #check if sums are sensible 
 colSums(movement_matrix)
 # # fit a new model to these data
@@ -60,4 +65,5 @@ colSums(movement_matrix)
 # # display the predicted movements
 # plot(predicted_movements)
 
+saveRDS(movement_matrix, "output/tabular/radiation_matrix.RDS")
 

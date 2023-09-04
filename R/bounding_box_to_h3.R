@@ -1,7 +1,7 @@
 source("R/bounding_box.R")
 
 lapply(
-  list.files("R/functions"),
+  list.files("R/functions", full.names = TRUE),
   source
 )
 
