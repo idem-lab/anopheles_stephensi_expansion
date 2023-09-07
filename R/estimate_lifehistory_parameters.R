@@ -26,6 +26,11 @@ source("R/functions/lifehistory_estimation_functions.R")
 # devtools::install_url("http://sourceforge.net/projects/mcmc-jags/files/rjags/4/rjags_4-4.tar.gz",
 #                       args="--configure-args='--with-jags-include=/opt/homebrew/bin/jags/include/JAGS        
 #                                               --with-jags-lib=/opt/homebrew/bin/jags/lib'")
+#Alternative method may be needed 
+# devtools::install_url("https://sourceforge.net/projects/mcmc-jags/files/rjags/4/rjags_4-4.tar.gz",
+#                       configure.args = c("--with-jags-include=/opt/homebrew/bin/jags/include/JAGS
+#                                               --with-jags-lib=/opt/homebrew/bin/jags/lib"))
+
 
 # load data, provided in the supplemental information to Villena et al., and clean/augment it
 data_villena <- load_villena_data()
