@@ -9,6 +9,12 @@ library(sf)
 library(greta)
 library(dismo)
 
+# load all functions
+. <- list.files(path = "R/functions/",
+                pattern = "*.R",
+                full.names = TRUE) %>%
+  lapply(source)
+
 # load data
 
 # load hexes and hex raster lookup
@@ -51,11 +57,11 @@ non_detection <- dismo::randomPoints(
 
 # combine these, noting which are background points (lower detection
 # probability), rather than absence records
-detections <- bind_rows(
-  non_detection,
-  mutate(first_detection,
-         background = 0)
-) %>%
+detections <- non_detection %>%
+  bind_rows(
+    mutate(first_detection,
+           background = 0)
+  ) %>%
   mutate(
     id = terra::extract(hex_lookup,
                         .[, 1:2],
@@ -144,7 +150,7 @@ radiation_dispersal <- sweep(unscaled_radiation_dispersal,
                              FUN = "/")
 
 # probability of dispersion
-dispersal_fraction <- normal(0, 0.5, truncation = c(0, 1))
+dispersal_fraction <- normal(0, 0.01, truncation = c(0, 1))
 
 # normalise these to have the overall probability of dispersing to that patch,
 # and add back the probability of remaining
@@ -181,7 +187,7 @@ dispersal_matrix <- dispersal_fraction * radiation_dispersal + (1 - dispersal_fr
 # model the relative density of larval habitats (note the intercept term here
 # controls the absolute value of K, so remove it to make it relative and control
 # that instead in the observation probabilities)
-larval_hab_formula <- ~ -1 + built_volume + pop
+larval_hab_formula <- ~ 1 + built_volume + pop
 
 # extract for both points and hexes
 larval_hab_cov_points <- model.matrix(larval_hab_formula,
@@ -203,7 +209,7 @@ K_points <- exp(log_K_points)
 
 # define the density-dependence scaling parameter M, expected to be positive,
 # so a standard lognormal; with a prior median of 1
-log_M <- normal(0, 1)
+log_M <- normal(-1, 1)
 M <- exp(log_M)
 
 # compute the log-intrinsic growth rate from this
@@ -259,8 +265,7 @@ initial_state <- K_hex * native_range_mask
 # bit) implemented in log space for a) numerical stability and b) because of a
 # bug in greta.dynamics that makes it fail with the '1' specified inside the
 # function
-
-transition_function <- function(state, iter, log_R, M, dispersal_matrix) {
+transition_function <- function(state, iter, K, log_R, M, dispersal_matrix) {
   # dd_scaling <- 1 + state / M
   log_dd_scaling <- log1p(state / M)
   # fecundity <- R * state
@@ -269,7 +274,9 @@ transition_function <- function(state, iter, log_R, M, dispersal_matrix) {
   log_grown_state <- log_fecundity - log_dd_scaling
   grown_state <- exp(log_grown_state)
   dispersed_state <- dispersal_matrix %*% grown_state
-  dispersed_state
+  # cap this at the carrying capacity and return
+  capped_dispersed_state <- greta_pmin(dispersed_state, K) 
+  capped_dispersed_state
 }
 
 library(greta.dynamics)
@@ -278,6 +285,7 @@ iters <- iterate_dynamic_function(transition_function = transition_function,
                                   initial_state = initial_state,
                                   niter = n_years,
                                   tol = 0,
+                                  K = K_hex,
                                   log_R = log_R_hex,
                                   M = M,
                                   dispersal_matrix = dispersal_matrix)
@@ -286,10 +294,12 @@ iters <- iterate_dynamic_function(transition_function = transition_function,
 rel_abund_hex <- t(iters$all_states)
 log_rel_abund_hex <- log(rel_abund_hex)
 
+
 # convert these to log proportions of carrying capacities in those hexes
 log_prop_full_hex <- sweep(log_rel_abund_hex, 2, log_K_hex, FUN = "-")
 
-# multiply these by the pixel carrying capacities to get K there
+# multiply these by pixel carrying capacities to get the relative abundance in
+# the pixels
 
 # hexes to points is an integer lookup giving the hexes to which each of the
 # points belong
@@ -307,8 +317,9 @@ p_detect_annual <- 1 - exp(-exp(log_rel_abund_points + log_detection_probability
 # and the cumulative probability of detection
 p_detect_cumul <- 1 - t(apply(1 - p_detect_annual, 1, "cumprod"))
 
-# can we model the right-censored time to detection with a time-dependent cox
-# proportional hazards likelihood to make this cumprod a cumsum?
+# can we instead model the right-censored time to detection with a
+# time-dependent Cox proportional hazards likelihood to make this cumprod a
+# cumsum?
 
 # extract the relevant element for the censored likelihood
 year_index <- match(detections$year_first_detected, years)
@@ -328,8 +339,72 @@ draws <- mcmc(m,
               chains = n_chains,
               initial_values = inits)
 
-coda::gelman.diag(draws, autoburnin = FALSE, multivariate = FALSE)
+coda::gelman.diag(draws,
+                  autoburnin = FALSE,
+                  multivariate = FALSE)
 plot(draws)
+summary(draws)
 
+# predict the larval habitat bit
+all_cells <- seq_len(ncell(mask))
+non_na_cells <- all_cells[!is.na(extract(mask, all_cells))]
+climatic_rel_abund_cells <- extract(climatic_rel_abund,
+                                    non_na_cells)[, 1]
+larval_covs_cells <- extract(larval_covs, non_na_cells) %>%
+  as_tibble()
+larval_hab_cov_cells <- model.matrix(larval_hab_formula,
+                                     data = larval_covs_cells)
+log_larval_hab_cells <- larval_hab_cov_cells %*% coefs
+log_K_cells <- log(climatic_rel_abund_cells) + log_larval_hab_cells
+K_cells <- exp(log_K_cells)
 
+K_cells_sim <- calculate(K_cells, values = draws, nsim = 100)[[1]]
+K_cells_pred <- apply(K_cells_sim,2, mean)
+K <- mask
+names(K) <- "carrying capacity"
+K[non_na_cells] <- K_cells_pred
+par(mfrow = c(1, 1))
+plot(K)
 
+# plot by hex proportions full to understand spread within suitable habitat
+target <- log_prop_full_hex
+
+log_prop_full_hex_sim <- calculate(target, values = draws, nsim = 100)[[1]]
+
+# or sample from priors
+# log_prop_full_hex_sim <- calculate(target, nsim = 100)[[1]]
+
+# idx <- 1
+# plot(exp(log_prop_full_hex_sim[1, , idx]), type = "n", ylim = range(exp(log_prop_full_hex_sim[, , idx])))
+# for(i in 1:100) {
+#   lines(exp(log_prop_full_hex_sim[i, , idx]))
+# }
+
+all_cells <- seq_len(ncell(mask))
+non_na_cells <- all_cells[!is.na(extract(mask, all_cells))]
+
+log_prop_full_hex_pred <- apply(log_prop_full_hex_sim, 2:3, mean)
+log_prop_full_cells <- log_prop_full_hex_pred[, hex_lookup[non_na_cells][, 1]]
+log_prop_full <- replicate(n_years, mask, simplify = FALSE) %>%
+  do.call(c, .)
+names(log_prop_full) <- years
+for (i in seq_len(n_years)) {
+  log_prop_full[[i]][non_na_cells] <- log_prop_full_cells[i, ]
+}
+
+years_plot <- as.character(round(seq(min(years), max(years), length.out = 4)))
+
+# why are some of these greater than 0 (proportion greater than 1)?
+prop_full <- exp(log_prop_full)
+plot(prop_full[[years_plot]])
+
+# to do:
+
+# add an observation probability parameter, based on the density of background
+# points. Make this fixed, for now, and assume proportionality to the
+# probability of detection
+
+# think about adding in post-detection increases in observation probability for
+# the same country and/or neighbouring countries
+
+# fix the initial nonzero state in Africa

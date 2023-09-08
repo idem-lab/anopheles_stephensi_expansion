@@ -43,10 +43,10 @@ location_data  <- as.location_dataframe(location_data)
 #note that the theta parameter (proportion of population moving) does not matter here since we are rescaling every column of the movement matrix to sum to 1 anyway
 predicted_flux  <- predict(radiationWithSelection(), location_data, symmetric = FALSE)
 
-movement_matrix <- sweep(predicted_flux$movement_matrix,
-                         2,
-                         colSums(predicted_flux$movement_matrix),
-                         FUN = "/")
+# scale this only against the maximum
+movement_matrix <- predicted_flux$movement_matrix / max(predicted_flux$movement_matrix)
+
+# zero-out the diagonals
 
 #check if sums are sensible 
 colSums(movement_matrix)
