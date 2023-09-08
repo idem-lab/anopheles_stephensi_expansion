@@ -17,10 +17,10 @@ library(dismo)
 
 # load data
 
-# load hexes and hex raster lookup
+# load hexes and hex raster lookup (all cells and populated areas)
 hexes <- readRDS("output/hexes.RDS")
 hex_lookup <- rast("output/rasters/derived/hex_raster_lookup.tif")
-hex_lookup[hex_lookup == 0] <- NA
+hex_populated_lookup <- rast("output/rasters/derived/hex_raster_populated_lookup.tif")
 
 # load pixel covariates
 mask <- rast("output/rasters/derived/mask.tif")
@@ -38,13 +38,13 @@ first_detection <- readRDS("output/tabular/first_detection.RDS")
 # filter this to points within the study region, and within the climatic
 # suitability prediction
 climate_vals <- terra::extract(climatic_rel_abund, first_detection[, 1:2])[, 2]
-hex_vals <- terra::extract(hex_lookup, first_detection[, 1:2])[, 2]
+hex_vals <- terra::extract(hex_populated_lookup, first_detection[, 1:2])[, 2]
 first_detection <- first_detection %>%
   filter(is.finite(hex_vals) & climate_vals > 0)
 
 # augment this with background points
 non_detection <- dismo::randomPoints(
-  mask = raster::raster(hex_lookup),
+  mask = raster::raster(hex_populated_lookup),
   n = 500,
   p = as.matrix(first_detection[, 1:2])) %>%
   as_tibble() %>%
@@ -63,7 +63,7 @@ detections <- non_detection %>%
            background = 0)
   ) %>%
   mutate(
-    id = terra::extract(hex_lookup,
+    id = terra::extract(hex_populated_lookup,
                         .[, 1:2],
                         ID = FALSE)[, 1]
   )
@@ -89,13 +89,13 @@ climatic_rel_abund_points <- terra::extract(climatic_rel_abund,
 # aggregate the values of the covariates at the hex scale
 covs_continuous <- !names(larval_covs) %in% c("type", "cover")
 larval_covs_continuous_hex <- terra::zonal(larval_covs[[covs_continuous]],
-                                           hex_lookup,
+                                           hex_populated_lookup,
                                            fun = "mean",
                                            na.rm = TRUE) %>%
   as_tibble()
 
 larval_covs_discrete_hex <- terra::zonal(larval_covs[[!covs_continuous]],
-                                           hex_lookup,
+                                           hex_populated_lookup,
                                            fun = "modal",
                                            na.rm = TRUE) %>%
   as_tibble()
@@ -115,7 +115,7 @@ larval_covs_hex <- larval_covs_hex[, names(larval_covs_points)]
 # extract the climatic relative abundances too
 climatic_rel_abund_hexes <- terra::zonal(
   x = climatic_rel_abund,
-  z = hex_lookup,
+  z = hex_populated_lookup,
   fun = "mean") %>%
   as_tibble() %>%
   pull(mean)
@@ -249,10 +249,11 @@ native_range_lookup <- detections %>%
   )
 native_range_lookup <- native_range_lookup[match(native_range_lookup$id, hex_order),]
 in_native_range <- native_range_lookup$native
+# eps <- sqrt(.Machine$double.eps)
+# native_range_mask <- ifelse(in_native_range, 1, eps)
+# initial_state <- K_hex * native_range_mask
 eps <- sqrt(.Machine$double.eps)
-native_range_mask <- ifelse(in_native_range, 1, eps)
-initial_state <- K_hex * native_range_mask
-
+initial_state <- K_hex * in_native_range + eps * (1 - in_native_range)
 
 # define the function to iterate dynamics
 
@@ -364,9 +365,11 @@ coda::gelman.diag(draws,
 plot(draws)
 summary(draws)
 
-# predict the larval habitat bit
+# make prediction rasters
 all_cells <- seq_len(ncell(mask))
 non_na_cells <- all_cells[!is.na(extract(mask, all_cells))]
+
+# predict the larval habitat and carrying capacities
 climatic_rel_abund_cells <- extract(climatic_rel_abund,
                                     non_na_cells)[, 1]
 larval_covs_cells <- extract(larval_covs, non_na_cells) %>%
@@ -375,55 +378,75 @@ larval_hab_cov_cells <- model.matrix(larval_hab_formula,
                                      data = larval_covs_cells)
 log_larval_hab_cells <- larval_hab_cov_cells %*% coefs
 log_K_cells <- log(climatic_rel_abund_cells) + log_larval_hab_cells
+
+larval_hab_cells <- exp(log_larval_hab_cells)
 K_cells <- exp(log_K_cells)
 
-K_cells_sim <- calculate(K_cells, values = draws, nsim = 100)[[1]]
-K_cells_pred <- apply(K_cells_sim,2, mean)
-K <- mask
+# and maximum occupancy
+max_occupancy_cells <- 1 - exp(-K_cells)
+
+# get the log proportions full in each timestep (hex level) and use it to
+# compute relative abundance at cell level
+log_prop_full_cells <- log_prop_full_hex[, hex_lookup[non_na_cells][, 1]]
+log_rel_abund_cells <- sweep(log_prop_full_cells, 2, log_K_cells, FUN = "+") 
+rel_abund_cells <- exp(log_rel_abund_cells)
+
+# convert to occupancy
+occupancy_cells <- 1 - exp(-rel_abund_cells)
+
+# get posterior simulations for temporally static variables
+sims_static <- calculate(K_cells,
+                         larval_hab_cells,
+                         max_occupancy_cells,
+                         # values = draws,
+                         nsim = 100)
+
+# make static maps
+K_cells_pred <- apply(sims_static$K_cells, 2, mean)
+larval_hab_cells_pred <- apply(sims_static$larval_hab_cells, 2, mean)
+max_occupancy_cells_pred <- apply(sims_static$max_occupancy_cells, 2, mean)
+
+larval_habitat <- K <- max_occupancy <- mask
 names(K) <- "carrying capacity"
+names(max_occupancy) <- "potential distribution"
+names(larval_habitat) <- "larval habitat"
+
 K[non_na_cells] <- K_cells_pred
-par(mfrow = c(1, 1))
+larval_habitat[non_na_cells] <- larval_hab_cells_pred
+max_occupancy[non_na_cells] <- max_occupancy_cells_pred
+
+# quick plot of them
+par(mfrow = c(3, 1))
+plot(larval_habitat)
 plot(K)
+plot(max_occupancy)
 
-# plot by hex proportions full to understand spread within suitable habitat
-target <- log_prop_full_hex
 
-# log_prop_full_hex_sim <- calculate(target, values = draws, nsim = 100)[[1]]
+# get posterior simulations
+sims_temporal <- calculate(occupancy_cells,
+                           # values = draws,
+                           nsim = 100)
 
-# or sample from priors
-log_prop_full_hex_sim <- calculate(target,
-                                   # values = list(dispersal_weights = t(c(0, 0, 1)),
-                                   #               # dispersal_fraction = 0,
-                                   #               log_M = log(1)),
-                                   nsim = 100)[[1]]
+occupancy_cells_pred <- apply(sims_temporal$occupancy_cells,
+                              2:3,
+                              mean)
 
-idx <- 1
-plot(exp(log_prop_full_hex_sim[1, , idx]), type = "n", ylim = range(exp(log_prop_full_hex_sim[, , idx])))
-for(i in 1:100) {
-  lines(exp(log_prop_full_hex_sim[i, , idx]))
-}
-
-all_cells <- seq_len(ncell(mask))
-non_na_cells <- all_cells[!is.na(extract(mask, all_cells))]
-
-log_prop_full_hex_pred <- apply(log_prop_full_hex_sim, 2:3, mean)
-log_prop_full_cells <- log_prop_full_hex_pred[, hex_lookup[non_na_cells][, 1]]
-log_prop_full <- replicate(n_years, mask, simplify = FALSE) %>%
+# set up time-varying rasters
+mask_multi <- replicate(n_years, mask, simplify = FALSE) %>%
   do.call(c, .)
-names(log_prop_full) <- years
+occupancy <- mask_multi
+names(occupancy) <- years
+
 for (i in seq_len(n_years)) {
-  log_prop_full[[i]][non_na_cells] <- log_prop_full_cells[i, ]
+  occupancy[[i]][non_na_cells] <- occupancy_cells_pred[i, ]
 }
 
-years_plot <- as.character(round(seq(min(years), max(years), length.out = 4)))
+years_plot <- as.character(round(seq(min(years), max(years), length.out = 6)))
+par(mfrow = c(3, 2))
+plot(occupancy[[years_plot]])
 
-# why are some of these greater than 0 (proportion greater than 1)?
-prop_full <- exp(log_prop_full)
-plot(prop_full[[years_plot]])
 
 # to do:
-
-# fix the initial nonzero state in Africa
 
 # add an observation probability parameter, based on the density of background
 # points. Make this fixed, for now, and assume proportionality to the

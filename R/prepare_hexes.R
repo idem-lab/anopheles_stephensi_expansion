@@ -17,8 +17,8 @@ region_hex <- get_h3_from_sf(
 
 
 # filter to only hexes populated areas 
-#populated <- rast("output/rasters/derived/populated_areas.tif")
-populated <- rast("output/rasters/covariates/populated.tif")
+populated <- rast("output/rasters/derived/populated_areas.tif")
+# populated <- rast("output/rasters/covariates/populated.tif")
 
 
 hexes <- region_hex %>%
@@ -41,14 +41,22 @@ hex_raster <- rasterize(hexes,
                         populated,
                         field = "id",
                         fun = min)
+hex_raster <- mask(hex_raster, populated)
 
-hex_raster <- hex_raster * populated
+# get the version with only populated areas
+hex_raster_populated <- hex_raster * populated
+hex_raster_populated[hex_raster_populated == 0] <- NA
 
-writeRaster(hex_raster, "output/rasters/derived/hex_raster_lookup.tif")
+writeRaster(hex_raster,
+            "output/rasters/derived/hex_raster_lookup.tif",
+            overwrite = TRUE)
+writeRaster(hex_raster_populated,
+            "output/rasters/derived/hex_raster_populated_lookup.tif",
+            overwrite = TRUE)
 saveRDS(hexes, "output/hexes.RDS")
 
 # compare hex raster with populated raster and region buffer
-plot(populated, col = inferno(5)[3:4])
+plot(populated, col = viridis::inferno(5)[3:4])
 plot(hex_raster, col = viridis::mako(123), add = TRUE)
 lines(region_shape_buffer, lwd = 3, col = "darkgoldenrod1")
 
@@ -83,13 +91,12 @@ hex_raster_alt <- rasterize(hexes_alt,
 
 hex_raster_alt <- hex_raster_alt * populated
 
-
 # compare hex raster with populated raster and region buffer
-plot(populated, col = inferno(5)[3:4])
+plot(populated, col = viridis::inferno(5)[3:4])
 plot(hex_raster_alt, col = viridis::plasma(123), add = TRUE)
 lines(region_shape_buffer, lwd = 3, col = "darkgoldenrod1")
 
 # compare hexes and alternative hexes
-plot(populated, col = inferno(5)[3:4])
+plot(populated, col = viridis::inferno(5)[3:4])
 plot(hex_raster_alt, col = viridis::plasma(123), add = TRUE)
-plot(hex_raster, col = viridis::mako(123), add = TRUE)
+plot(hex_raster_populated, col = viridis::mako(123), add = TRUE)
