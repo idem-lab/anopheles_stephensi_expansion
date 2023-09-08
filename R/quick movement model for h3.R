@@ -1,7 +1,14 @@
 #devtools::install_github('SEEG-Oxford/movement')
 
 library(tidyverse)
-library(readr); library(sf); library(terra); library(maptools); library(movement); library(geodata); library(h3);library(reshape2)
+library(readr)
+library(sf)
+library(terra)
+library(maptools)
+library(movement)
+library(geodata)
+library(h3)
+library(reshape2)
 
 hexes <- readRDS("output/hexes.RDS")
 
@@ -39,25 +46,32 @@ location_data <- data.frame(location = hexes$h3_index,
                             y = (st_centroid(hexes) %>% st_coordinates())[,2])
 
 location_data  <- as.location_dataframe(location_data)
-# simulate movements 
-#note that the theta parameter (proportion of population moving) does not matter here since we are rescaling every column of the movement matrix to sum to 1 anyway
-predicted_flux  <- predict(radiationWithSelection(), location_data, symmetric = FALSE)
+
+# simulate movements: note that the theta parameters (proportion of population
+# moving) do not matter here since we are rescaling the movement matrix to
+# have a maximum 1 anyway
+predicted_flux_radiation  <- predict(originalRadiation(theta = 1),
+                                     location_data,
+                                     symmetric = FALSE)
+radiation_matrix <- predicted_flux_radiation$movement_matrix
+
+predicted_flux_gravity  <- predict(gravity(theta = 1,
+                                           alpha = 1,
+                                           beta = 1,
+                                           gamma = 1),
+                                   location_data,
+                                   symmetric = FALSE)
+gravity_matrix <- predicted_flux_gravity$movement_matrix
+
+# do a straightforward distance matrix, for exponential distance decay too
+distance_matrix <- fields::rdist.earth(location_data[, c("x", "y")])
+rownames(distance_matrix) <- colnames(distance_matrix) <- rownames(predicted_flux_gravity$movement_matrix)
 
 # scale this only against the maximum
-movement_matrix <- predicted_flux$movement_matrix / max(predicted_flux$movement_matrix)
+radiation_matrix <- radiation_matrix / max(radiation_matrix)
+gravity_matrix <- gravity_matrix / max(gravity_matrix)
+distance_matrix <- distance_matrix / max(distance_matrix)
 
-# zero-out the diagonals
-
-#check if sums are sensible 
-colSums(movement_matrix)
-# # fit a new model to these data
-# movement_model <- movement(movement_matrix ~ location_data, radiationWithSelection())
-# # print movement_model
-# print(movement_model)
-# # predict the population movements
-# predicted_movements  <- predict(movement_model, location_data)
-# # display the predicted movements
-# plot(predicted_movements)
-
-saveRDS(movement_matrix, "output/tabular/radiation_matrix.RDS")
-
+saveRDS(radiation_matrix, "output/tabular/radiation_matrix.RDS")
+saveRDS(gravity_matrix, "output/tabular/gravity_matrix.RDS")
+saveRDS(distance_matrix, "output/tabular/distance_matrix.RDS")

@@ -122,6 +122,8 @@ climatic_rel_abund_hexes <- terra::zonal(
 
 # load a dispersal matrix between hexes
 radiation_dispersal_raw <- readRDS("output/tabular/radiation_matrix.RDS")
+gravity_dispersal_raw <- readRDS("output/tabular/gravity_matrix.RDS")
+distance_matrix_raw <- readRDS("output/tabular/distance_matrix.RDS")
 
 # create a lookup to the hex ids, to keep only those we use
 matrix_order <- tibble(
@@ -137,30 +139,39 @@ matrix_index <- hexes %>%
 
 n_hexes <- nrow(hexes)
 
-# subset, blank out diagonals, and relevel
-diagonal <- diag(nrow = n_hexes, ncol = n_hexes)
-unscaled_radiation_dispersal <- radiation_dispersal_raw[matrix_index, matrix_index]
-unscaled_radiation_dispersal <- unscaled_radiation_dispersal * (1 - diagonal)
+# subset all of these
+radiation_dispersal <- radiation_dispersal_raw[matrix_index, matrix_index]
+gravity_dispersal <- gravity_dispersal_raw[matrix_index, matrix_index]
+distance_matrix <- distance_matrix_raw[matrix_index, matrix_index]
 
-# make these columns sum to 1 to get probability of moving to each other patch
-# *if* they left
-radiation_dispersal <- sweep(unscaled_radiation_dispersal,
-                             1,
-                             colSums(unscaled_radiation_dispersal),
-                             FUN = "/")
+# model exponential dispersal kernel with the distance matrix, (accounting for
+# different ranges) and zero out the diagonals
+distance_decay <- normal(0, 0.01, truncation = c(0, Inf))
+exponential_dispersal <- exp(-distance_matrix / distance_decay)
 
-# probability of dispersion
+# overall rate of dispersal
 dispersal_fraction <- normal(0, 0.01, truncation = c(0, 1))
 
-# normalise these to have the overall probability of dispersing to that patch,
-# and add back the probability of remaining
-dispersal_matrix <- dispersal_fraction * radiation_dispersal + (1 - dispersal_fraction) * diagonal
+# apply weights (summing to 1) for the different dispersal modes, with a priori
+# equal weights on each
+# dispersal_weights <- t(dirichlet(alpha = t(rep(1/3, 3))))
 
-# # check this doesn't lead to population growth
-# colSums(calculate(dispersal_matrix, nsim = 1)[[1]][1, , ])
-# growth <- dispersal_matrix %*% (ones(n_hexes) / n_hexes) 
-# calculate(sum(growth), nsim = 1)[[1]][1, , ]
+# don't use dirichlet, because it's hard to initialise
+multilogit_weights <- normal(0, 1, dim = c(1, 2))
+dispersal_weights <- t(imultilogit(multilogit_weights))
+# hist(calculate(dispersal_weights[2], nsim = 1000)[[1]], breaks = 100)
 
+weighted_dispersal <- dispersal_weights[1] * radiation_dispersal +
+  dispersal_weights[2] * gravity_dispersal +
+  dispersal_weights[3] * exponential_dispersal
+
+# apply the dispersal fraction to get the importation rate into each cell (not
+# removing from the origin cell)
+dispersal_matrix <- dispersal_fraction * weighted_dispersal
+
+# set the diagonal elements to 1 so the matrix multiply doesn't affect
+# within-location population
+diag(dispersal_matrix) <- ones(n_hexes)
 
 # build model
 
@@ -209,7 +220,7 @@ K_points <- exp(log_K_points)
 
 # define the density-dependence scaling parameter M, expected to be positive,
 # so a standard lognormal; with a prior median of 1
-log_M <- normal(-1, 1)
+log_M <- normal(0, 1)
 M <- exp(log_M)
 
 # compute the log-intrinsic growth rate from this
@@ -273,6 +284,8 @@ transition_function <- function(state, iter, K, log_R, M, dispersal_matrix) {
   # grown_state <- fecundity / dd_scaling
   log_grown_state <- log_fecundity - log_dd_scaling
   grown_state <- exp(log_grown_state)
+  # now compute importations into each cell, from the dispersal matrix (with
+  # diagonal elements set to 1 so no within-cell population change)
   dispersed_state <- dispersal_matrix %*% grown_state
   # cap this at the carrying capacity and return
   capped_dispersed_state <- greta_pmin(dispersed_state, K) 
@@ -293,7 +306,6 @@ iters <- iterate_dynamic_function(transition_function = transition_function,
 # get relative abundance in hexes
 rel_abund_hex <- t(iters$all_states)
 log_rel_abund_hex <- log(rel_abund_hex)
-
 
 # convert these to log proportions of carrying capacities in those hexes
 log_prop_full_hex <- sweep(log_rel_abund_hex, 2, log_K_hex, FUN = "-")
@@ -329,13 +341,20 @@ obs_prob <- p_detect_cumul[obs_index]
 
 distribution(detections$ever_detected) <- bernoulli(obs_prob)
 
-m <- model(coefs, dispersal_fraction, detection_probability, log_M)
+m <- model(coefs,
+           dispersal_fraction,
+           dispersal_weights,
+           distance_decay,
+           detection_probability,
+           log_M)
 
 source("R/generate_valid_inits.R")
 library(tensorflow)
 n_chains <- 4
 inits <- generate_valid_inits(m, n_chains)
 draws <- mcmc(m,
+              # warmup = 100,
+              # n_samples = 100,
               chains = n_chains,
               initial_values = inits)
 
@@ -369,16 +388,20 @@ plot(K)
 # plot by hex proportions full to understand spread within suitable habitat
 target <- log_prop_full_hex
 
-log_prop_full_hex_sim <- calculate(target, values = draws, nsim = 100)[[1]]
+# log_prop_full_hex_sim <- calculate(target, values = draws, nsim = 100)[[1]]
 
 # or sample from priors
-# log_prop_full_hex_sim <- calculate(target, nsim = 100)[[1]]
+log_prop_full_hex_sim <- calculate(target,
+                                   # values = list(dispersal_weights = t(c(0, 0, 1)),
+                                   #               # dispersal_fraction = 0,
+                                   #               log_M = log(1)),
+                                   nsim = 100)[[1]]
 
-# idx <- 1
-# plot(exp(log_prop_full_hex_sim[1, , idx]), type = "n", ylim = range(exp(log_prop_full_hex_sim[, , idx])))
-# for(i in 1:100) {
-#   lines(exp(log_prop_full_hex_sim[i, , idx]))
-# }
+idx <- 1
+plot(exp(log_prop_full_hex_sim[1, , idx]), type = "n", ylim = range(exp(log_prop_full_hex_sim[, , idx])))
+for(i in 1:100) {
+  lines(exp(log_prop_full_hex_sim[i, , idx]))
+}
 
 all_cells <- seq_len(ncell(mask))
 non_na_cells <- all_cells[!is.na(extract(mask, all_cells))]
@@ -400,6 +423,8 @@ plot(prop_full[[years_plot]])
 
 # to do:
 
+# fix the initial nonzero state in Africa
+
 # add an observation probability parameter, based on the density of background
 # points. Make this fixed, for now, and assume proportionality to the
 # probability of detection
@@ -407,4 +432,3 @@ plot(prop_full[[years_plot]])
 # think about adding in post-detection increases in observation probability for
 # the same country and/or neighbouring countries
 
-# fix the initial nonzero state in Africa
