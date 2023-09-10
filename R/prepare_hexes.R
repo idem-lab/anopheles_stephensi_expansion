@@ -13,8 +13,8 @@ source("R/bounding_box.R")
 
 # put hexagons around them
 region_hex <- get_h3_from_sf(
-  sf_object = st_as_sf(region_shape_buffer))
-
+  sf_object = st_as_sf(region_shape_buffer),
+  h3_res = 1)
 
 # filter to only hexes populated areas 
 populated <- rast("output/rasters/derived/populated_areas.tif")

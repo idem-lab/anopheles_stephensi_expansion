@@ -7,7 +7,7 @@ library(tidyverse)
 
 # load mechanistically-modelled relative abundance of An stephensi adults per larval
 # habitat, aggregate to an annual average abundance, and renormalise
-climatic_rel_abund_monthly <- rast("output/An_stephensi_mechanistic_abundance.tif")
+climatic_rel_abund_monthly <- rast("output/rasters/derived/An_stephensi_mechanistic_abundance.tif")
 climatic_rel_abund <- mean(climatic_rel_abund_monthly)
 
 # load template raster
@@ -107,10 +107,14 @@ larval_covs_discrete <- aggregate(larval_covs_discrete,
 larval_covs <- c(larval_covs_continuous,
                  larval_covs_discrete)
 
+# make a new mask based on all of these
+new_mask <- app(larval_covs, function(x) !any(is.na(x)))
+new_mask[new_mask == 0] <- NA
+
 # tidy up names
 names(larval_covs) <- gsub("_2020", "", names(larval_covs))
 # and mask to the study area
-larval_covs <- mask(larval_covs, covmask)
+larval_covs <- mask(larval_covs, new_mask)
 
 # define the populated areas (those to use in the spread model)
 populated <- smod %in% c("URBAN CENTRE",
@@ -122,10 +126,10 @@ populated <- smod %in% c("URBAN CENTRE",
 populated <- aggregate(populated,
                        agg_ratio,
                        fun = "max")
-populated <- mask(populated, covmask)
+populated <- mask(populated, new_mask)
 
 terra::writeRaster(
-  x = covmask,
+  x = new_mask,
   filename = "output/rasters/derived/mask.tif",
   overwrite = TRUE
 )

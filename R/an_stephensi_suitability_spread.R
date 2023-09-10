@@ -31,8 +31,9 @@ as_detection_density <- rast("output/rasters/derived/an_stephensi_detection_dens
 mask <- mask(mask, hex_lookup)
 
 # add an epsilon to the climatic relative abundance to avoid 0 abundances later
-climatic_rel_abund <- climatic_rel_abund + .Machine$double.eps
 climatic_rel_abund <- mask(climatic_rel_abund, mask)
+climate_suitable <- climatic_rel_abund > 0
+climatic_rel_abund <- climatic_rel_abund + .Machine$double.eps
 
 # An. stephensi presence, absence, and years of detection
 first_detection <- readRDS("output/tabular/first_detection.RDS")
@@ -227,7 +228,7 @@ diag(dispersal_matrix) <- ones(n_hexes)
 # model the relative density of larval habitats (note the intercept term here
 # controls the absolute value of K, so remove it to make it relative and control
 # that instead in the observation probabilities)
-larval_hab_formula <- ~ 1 + built_volume + pop
+larval_hab_formula <- ~ -1 + built_volume + tcb + tcw
 
 # extract for both points and hexes
 larval_hab_cov_points <- model.matrix(larval_hab_formula,
@@ -378,23 +379,28 @@ m <- model(coefs,
            detection_probability,
            log_M)
 
+
+
+
+# fit the model
 source("R/generate_valid_inits.R")
 library(tensorflow)
 n_chains <- 4
 inits <- generate_valid_inits(m, n_chains)
 draws <- mcmc(m,
-              # warmup = 100,
-              # n_samples = 100,
               chains = n_chains,
               initial_values = inits)
 
 coda::gelman.diag(draws,
                   autoburnin = FALSE,
                   multivariate = FALSE)
+
 plot(draws)
 summary(draws)
 
+
 # make prediction rasters
+
 all_cells <- seq_len(ncell(mask))
 non_na_cells <- all_cells[!is.na(extract(mask, all_cells))]
 
@@ -471,16 +477,37 @@ for (i in seq_len(n_years)) {
 }
 
 years_plot <- as.character(round(seq(min(years), max(years), length.out = 6)))
+
 par(mfrow = c(3, 2))
 plot(occupancy[[years_plot]])
 
 
+# save the distribution rasters
+
+terra::writeRaster(
+  x = max_occupancy,
+  filename = "output/rasters/derived/predicted_potential_distribution.tif",
+  overwrite = TRUE
+)
+
+terra::writeRaster(
+  x = occupancy,
+  filename = "output/rasters/derived/predicted_occupancy.tif",
+  overwrite = TRUE
+)
+
+
+
 # to do:
 
-# add an observation probability parameter, based on the density of background
-# points. Make this fixed, for now, and assume proportionality to the
-# probability of detection
+# use new observation probability covariate (logit with intercept and
+# sign-informative slope on log1p scale?)
 
-# think about adding in post-detection increases in observation probability for
-# the same country and/or neighbouring countries
+# when computing hex K, multiply by summed area in populated area pixels
+
+# when computing cell K, multiply by pixel area
+
+
+# when modelling hex-level suitability, consider not using populated areas in
+# weighting - is it skewing predictions towards built up areas?
 
