@@ -37,6 +37,33 @@ climatic_rel_abund <- mask(climatic_rel_abund, mask)
 # An. stephensi presence, absence, and years of detection
 first_detection <- readRDS("output/tabular/first_detection.RDS")
 
+# move some of these points onto land (up to 50km), and remove the remainder
+# (some outside the region, others on tiny islands)
+first_detection <- first_detection %>%
+  mutate(
+    nearest_land(
+      coords = dplyr::select(., x, y),
+      raster = mask,
+      projected_crs = "ESRI:102022",
+      max_distance_m = 50 * 1e3
+    )
+  ) %>%
+  filter(
+    !is.na(x) & !is.na(y)
+  )
+
+
+# filter out any An stephensi detections that are inconcsitent with the climatic
+# relative abundance (parts of Iran, Afghanistan)
+first_detection <- first_detection %>%
+  mutate(
+    valid = !is.na(terra::extract(mask, .[, c("x", "y")])[, 2]),
+    suitable = terra::extract(climate_suitable, .[, c("x", "y")])[, 2],
+    suitable = case_when(
+      !is.finite(suitable) ~ FALSE,
+      .default = suitable)
+  )
+
 # filter this to points within the study region, and within the climatic
 # suitability prediction
 climate_vals <- terra::extract(climatic_rel_abund, first_detection[, 1:2])[, 2]
