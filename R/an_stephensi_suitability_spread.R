@@ -27,6 +27,8 @@ mask <- rast("output/rasters/derived/mask.tif")
 larval_covs <- rast("output/rasters/derived/larval_habitat_covariates.tif")
 populated <- rast("output/rasters/derived/populated_areas.tif")
 climatic_rel_abund <- rast("output/rasters/derived/climatic_rel_abund.tif")
+as_detection_density <- rast("output/rasters/derived/an_stephensi_detection_density.tif")
+mask <- mask(mask, hex_lookup)
 
 # add an epsilon to the climatic relative abundance to avoid 0 abundances later
 climatic_rel_abund <- climatic_rel_abund + .Machine$double.eps
