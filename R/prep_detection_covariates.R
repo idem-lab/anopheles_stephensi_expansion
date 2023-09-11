@@ -3,21 +3,21 @@ library(terra)
 library(sf)
 library(tidyverse)
 
-# raster of populated areas
-populated <- rast("~/Dropbox/github/anopheles_stephensi_expansion/output/rasters/derived/populated_areas.tif")
+# get combined mask
+hex_lookup <- rast("output/rasters/derived/hex_raster_lookup.tif")
+mask_old <- rast("output/rasters/derived/mask.tif")
+mask_old <- mask(mask_old, hex_lookup)
 
 # An. stephensi detections
-detections <- readRDS("~/Dropbox/github/anopheles_stephensi_expansion/output/tabular/first_detection.RDS")
+detections <- readRDS("output/tabular/first_detection.RDS")
 
 # GBIF background point detections
-bg <- readRDS("~/Dropbox/github/anopheles_stephensi_expansion/output/tabular/bg_moz_many_20230904.RDS")
+bg <- readRDS("output/tabular/bg_moz_many_20230904.RDS")
 
 # do some reprojection, but stash the originals
-mask_old <- populated * 0
 old_crs <- "EPSG:4326"
 new_crs <- "ESRI:102022"
-populated <- terra::project(populated, new_crs)
-mask <- populated * 0
+mask <- terra::project(mask_old, new_crs)
 
 bg_observations <- bg %>%
   st_as_sf(
@@ -26,11 +26,11 @@ bg_observations <- bg %>%
   ) %>%
   st_transform(new_crs) %>%
   mutate(
-    populated = terra::extract(populated, .)[, 2],
-    valid = !is.na(populated)
+    mask = terra::extract(mask, .)[, 2],
+    valid = !is.na(mask)
   ) %>%
   filter(
-    valid & populated
+    valid & mask
   ) %>%
   sample_n(
     min(100000, n())
@@ -38,12 +38,11 @@ bg_observations <- bg %>%
   st_coordinates() %>%
   as.matrix()
 
-plot(populated * 0)
+plot(mask)
 points(bg_observations, cex = 0.5)
 
-
 bg_count <- terra::rasterize(bg_observations,
-                             populated,
+                             mask,
                              fun = length,
                              background = 0)
 bg_count <- mask(bg_count, mask)
@@ -75,8 +74,8 @@ as_detections <- detections %>%
     new_crs
   ) %>%
   mutate(
-    populated = terra::extract(populated, .)[, 2],
-    valid = !is.na(populated)
+    mask = terra::extract(mask, .)[, 2],
+    valid = !is.na(mask)
   ) %>%
   filter(
     valid
@@ -114,8 +113,7 @@ for (year in years) {
     as.matrix() %>%
     terra::rasterize(mask,
                      fun = length,
-                     background = 0) %>%
-    terra::mask(mask)
+                     background = 0)
   
   subset_density <- focal(subset_count,
                           w = window,
@@ -126,7 +124,7 @@ for (year in years) {
   as_detection_density[[match(year, years)]] <- subset_density
 }
 
-# project back ot wgs84 and save
+# project back to wgs84, mask and save
 as_detection_density_wgs84 <- as_detection_density %>%
   project(old_crs) %>%
   resample(mask_old) %>%
