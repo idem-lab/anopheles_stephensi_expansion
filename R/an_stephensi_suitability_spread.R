@@ -31,6 +31,11 @@ as_detection_density <- rast("output/rasters/derived/an_stephensi_detection_dens
 mask <- mask(mask, hex_lookup)
 hex_populated_lookup <- mask(hex_populated_lookup, mask)
 
+# make a raster of cell areas, and scale them
+cell_area <- terra::cellSize(mask)
+cell_area <- mask(cell_area, mask)
+cell_area <- cell_area / global(cell_area, "max", na.rm = TRUE)[1, 1]
+
 # add an epsilon to the climatic relative abundance to avoid 0 abundances later
 climatic_rel_abund <- mask(climatic_rel_abund, mask)
 climate_suitable <- climatic_rel_abund > 0
@@ -124,6 +129,14 @@ log_detection_density_points <- terra::extract(as_detection_density,
   t() %>%
   log1p()
 
+# and the log cell areas for points
+log_area_points <- terra::extract(cell_area,
+                                  detections[, 1:2],
+                                  ID = FALSE) %>%
+  as_tibble() %>%
+  pull(area) %>%
+  log()
+
 # aggregate the values of the covariates at the hex scale
 covs_continuous <- !names(larval_covs) %in% c("type", "cover")
 larval_covs_continuous_hex <- terra::zonal(larval_covs[[covs_continuous]],
@@ -157,6 +170,17 @@ climatic_rel_abund_hexes <- terra::zonal(
   fun = "mean") %>%
   as_tibble() %>%
   pull(mean)
+
+# and the total cell areas (then divide by max to maintain scaling on M)
+log_area_hex <- terra::zonal(
+  x = cell_area,
+  z = hex_populated_lookup,
+  fun = "sum")  %>%
+  as_tibble() %>%
+  pull(area) %>%
+  log()
+# area_hexes <- area_hexes / max(area_hexes)
+log_area_hex <- log_area_hex - max(log_area_hex)
 
 # load a dispersal matrix between hexes
 radiation_dispersal_raw <- readRDS("output/tabular/radiation_matrix.RDS")
@@ -267,8 +291,12 @@ log_larval_hab_points <- larval_hab_cov_points %*% coefs
 log_larval_hab_hex <- larval_hab_cov_hex %*% coefs
 
 # get the carrying capacity at hex and point scale
-log_K_hex <- log(climatic_rel_abund_hexes) + log_larval_hab_hex
-log_K_points <- log(climatic_rel_abund_points) + log_larval_hab_points
+log_K_hex <- log(climatic_rel_abund_hexes) +
+  log_larval_hab_hex +
+  log_area_hex
+log_K_points <- log(climatic_rel_abund_points) +
+  log_larval_hab_points +
+  log_area_points
 K_hex <- exp(log_K_hex)
 K_points <- exp(log_K_points)
 
@@ -406,7 +434,7 @@ m <- model(coefs,
 # fit the model
 source("R/generate_valid_inits.R")
 library(tensorflow)
-n_chains <- 4
+n_chains <- 10
 inits <- generate_valid_inits(m, n_chains)
 draws <- mcmc(m,
               chains = n_chains,
@@ -428,12 +456,17 @@ non_na_cells <- all_cells[!is.na(extract(mask, all_cells))]
 # predict the larval habitat and carrying capacities
 climatic_rel_abund_cells <- extract(climatic_rel_abund,
                                     non_na_cells)[, 1]
+log_area_cells <- extract(cell_area,
+                          non_na_cells)[, 1] %>%
+  log()
 larval_covs_cells <- extract(larval_covs, non_na_cells) %>%
   as_tibble()
 larval_hab_cov_cells <- model.matrix(larval_hab_formula,
                                      data = larval_covs_cells)
 log_larval_hab_cells <- larval_hab_cov_cells %*% coefs
-log_K_cells <- log(climatic_rel_abund_cells) + log_larval_hab_cells
+log_K_cells <- log(climatic_rel_abund_cells) +
+  log_larval_hab_cells +
+  log_area_cells
 
 larval_hab_cells <- exp(log_larval_hab_cells)
 K_cells <- exp(log_K_cells)
@@ -471,16 +504,37 @@ K[non_na_cells] <- K_cells_pred
 larval_habitat[non_na_cells] <- larval_hab_cells_pred
 max_occupancy[non_na_cells] <- max_occupancy_cells_pred
 
+
+# make a binary layer of populated areas, to set all the non-populated areas to
+# 0 in predictions (populated_areas.tif has the wrong extent - need to fix and align
+# all of them!)
+populated_area_mask <- hex_populated_lookup * 0 + 1
+populated_area_mask[is.na(populated_area_mask)] <- 0
+populated_area_mask <- mask(populated_area_mask, mask)
+
+larval_habitat <- larval_habitat * populated_area_mask
+K <- K * populated_area_mask
+max_occupancy <- max_occupancy * populated_area_mask
+
 # quick plot of them
 par(mfrow = c(3, 1))
 plot(larval_habitat)
 plot(K)
 plot(max_occupancy)
 
+par(mfrow = c(1, 1))
+plot(max_occupancy)
+
+# save this out
+terra::writeRaster(
+  x = max_occupancy,
+  filename = "output/rasters/derived/predicted_potential_distribution.tif",
+  overwrite = TRUE
+)
 
 # get posterior simulations
 sims_temporal <- calculate(occupancy_cells,
-                           # values = draws,
+                           values = draws,
                            nsim = 100)
 
 occupancy_cells_pred <- apply(sims_temporal$occupancy_cells,
@@ -497,35 +551,19 @@ for (i in seq_len(n_years)) {
   occupancy[[i]][non_na_cells] <- occupancy_cells_pred[i, ]
 }
 
+# set unpopulated areas to 0
+occupancy <- occupancy * populated_area_mask
+
 years_plot <- as.character(round(seq(min(years), max(years), length.out = 6)))
 
 par(mfrow = c(3, 2))
 plot(occupancy[[years_plot]])
 
-
 # save the distribution rasters
-
-terra::writeRaster(
-  x = max_occupancy,
-  filename = "output/rasters/derived/predicted_potential_distribution.tif",
-  overwrite = TRUE
-)
 
 terra::writeRaster(
   x = occupancy,
   filename = "output/rasters/derived/predicted_occupancy.tif",
   overwrite = TRUE
 )
-
-
-
-# to do:
-
-# when computing hex K, multiply by summed area in populated area pixels
-
-# when computing cell K, multiply by pixel area
-
-
-# when modelling hex-level suitability, consider not using populated areas in
-# weighting - is it skewing predictions towards built up areas?
 
