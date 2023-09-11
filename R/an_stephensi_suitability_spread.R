@@ -25,10 +25,11 @@ hex_populated_lookup <- rast("output/rasters/derived/hex_raster_populated_lookup
 # load pixel covariates
 mask <- rast("output/rasters/derived/mask.tif")
 larval_covs <- rast("output/rasters/derived/larval_habitat_covariates.tif")
-populated <- rast("output/rasters/derived/populated_areas.tif")
 climatic_rel_abund <- rast("output/rasters/derived/climatic_rel_abund.tif")
 as_detection_density <- rast("output/rasters/derived/an_stephensi_detection_density.tif")
+
 mask <- mask(mask, hex_lookup)
+hex_populated_lookup <- mask(hex_populated_lookup, mask)
 
 # add an epsilon to the climatic relative abundance to avoid 0 abundances later
 climatic_rel_abund <- mask(climatic_rel_abund, mask)
@@ -53,8 +54,7 @@ first_detection <- first_detection %>%
     !is.na(x) & !is.na(y)
   )
 
-
-# filter out any An stephensi detections that are inconcsitent with the climatic
+# filter out any An stephensi detections that are inconsistent with the climatic
 # relative abundance (parts of Iran, Afghanistan)
 first_detection <- first_detection %>%
   mutate(
@@ -109,12 +109,20 @@ larval_covs_points <- terra::extract(larval_covs,
                                      ID = FALSE) %>%
   as_tibble()
 
+# and the climatic model
 climatic_rel_abund_points <- terra::extract(climatic_rel_abund,
                                      detections[, 1:2],
                                      ID = FALSE) %>%
   as_tibble() %>%
   pull(mean)
 
+# and the detection covariates (log(1+x) transformed)
+log_detection_density_points <- terra::extract(as_detection_density,
+                                               detections[, 1:2],
+                                               ID = FALSE) %>%
+  as.matrix() %>%
+  t() %>%
+  log1p()
 
 # aggregate the values of the covariates at the hex scale
 covs_continuous <- !names(larval_covs) %in% c("type", "cover")
@@ -202,6 +210,22 @@ dispersal_matrix <- dispersal_fraction * weighted_dispersal
 # set the diagonal elements to 1 so the matrix multiply doesn't affect
 # within-location population
 diag(dispersal_matrix) <- ones(n_hexes)
+
+# model the observation probability with an intercept and positive-constrained
+# coefficient for density, on the logit scale
+det_prob_intercept <- normal(qlogis(0.01), 1)
+det_prob_slope <- normal(0, 1, truncation = c(0, Inf))
+
+# model the relative probability of detection in a single year in a given
+# location (relative to a density of 1 mosquito)
+logit_det_prob <- det_prob_intercept + det_prob_slope * log_detection_density_points
+# I *think* this is more numerically stable:
+log_det_prob <- log(ilogit(logit_det_prob))
+# log_det_prob <- -log1p(exp(-logit_det_prob))
+# log(ilogit(x))
+# = log(1 / (1 + exp(-x)))
+# = log(1) - log(1 + exp(-x))
+# = -log1p(exp(-x))
 
 # build model
 
@@ -351,12 +375,11 @@ log_rel_abund_points <- sweep(log_prop_full_points, 2, log_K_points, FUN = "+")
 
 # now define a likelihood for the (right truncated) time to detection dataset
 
-# compute the relative probability of detection in a single year in a given
-# location (relative to a density of 1 mosquito)
-detection_probability <- normal(0, 0.1, truncation = c(0, 1))
-log_detection_probability <- log(detection_probability)
+# model detection probability, relative to weighted cumulative number of
+# detections in the nearby area
+
 # compute the probability of detection in that place and year
-p_detect_annual <- 1 - exp(-exp(log_rel_abund_points + log_detection_probability))
+p_detect_annual <- 1 - exp(-exp(log_rel_abund_points + log_det_prob))
 # and the cumulative probability of detection
 p_detect_cumul <- 1 - t(apply(1 - p_detect_annual, 1, "cumprod"))
 
@@ -376,11 +399,9 @@ m <- model(coefs,
            dispersal_fraction,
            dispersal_weights,
            distance_decay,
-           detection_probability,
+           det_prob_intercept,
+           det_prob_slope,
            log_M)
-
-
-
 
 # fit the model
 source("R/generate_valid_inits.R")
@@ -499,9 +520,6 @@ terra::writeRaster(
 
 
 # to do:
-
-# use new observation probability covariate (logit with intercept and
-# sign-informative slope on log1p scale?)
 
 # when computing hex K, multiply by summed area in populated area pixels
 
