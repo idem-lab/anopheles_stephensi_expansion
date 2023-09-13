@@ -308,32 +308,13 @@ M <- exp(log_M)
 # compute the log-intrinsic growth rate from this
 log_R_hex <- log1pe(log_K_hex - log_M)
 
-# set an initial vector population state in these locations, at or near carrying
-# capacity in native range, and at some minimal level in other areas (note that
-# masking with 0s broke the model gradients, for reasons I don't fully
-# understand)
-# for all hexes, find out whether they contain at least one 'native range' point
-native_range_lookup <- detections %>%
-  group_by(id) %>%
-  summarise(
-    native = any(native)
-  ) %>%
-  right_join(
-    tibble(
-      id = hex_order),
-    by = "id"
-  ) %>%
-  arrange(
-    id
-  ) %>%
-  mutate(
-    native = replace_na(native, FALSE)
-  )
-native_range_lookup <- native_range_lookup[match(native_range_lookup$id, hex_order),]
-in_native_range <- native_range_lookup$native
-# eps <- sqrt(.Machine$double.eps)
-# native_range_mask <- ifelse(in_native_range, 1, eps)
-# initial_state <- K_hex * native_range_mask
+# manually define the hexes in the native range to roughly match that in Sinka
+# et al 2020 (exclude western part of Arabian peninsula)
+hex_native <- c(7, 8, 11, 27, 29, 38, 39, 40, 41, 45, 46, 54, 
+              68, 69, 71, 72, 73, 74, 75,
+              93, 94, 99, 100, 101, 102)
+in_native_range <- as.numeric(hex_order %in% hex_native)
+
 eps <- sqrt(.Machine$double.eps)
 initial_state <- K_hex * in_native_range + eps * (1 - in_native_range)
 
@@ -447,6 +428,29 @@ coda::gelman.diag(draws,
 plot(draws)
 summary(draws)
 
+# identify the chains that fell in each mode
+
+mn <- lapply(draws, function(x) mean(x[, "log_M"]))
+big_m_chain <- mn > 2
+mode_1_index <- which(big_m_chain)
+mode_2_index <- which(!big_m_chain)
+
+# need to split the draws, and secret draws, by these
+mi <- attr(draws, "model_info")
+mi_mode_1 <- mi_mode_2 <- mi
+
+mi_mode_1$raw_draws <- mi$raw_draws[mode_1_index]
+draws_mode_1 <- greta:::as_greta_mcmc_list(
+  x = draws[mode_1_index],
+  model_info = mi_mode_1
+)
+
+mi_mode_2$raw_draws <- mi_mode_2$raw_draws[mode_2_index]
+draws_mode_2 <- greta:::as_greta_mcmc_list(
+  x = draws[mode_2_index],
+  model_info = mi_mode_2
+)
+
 
 # make prediction rasters
 
@@ -487,7 +491,7 @@ occupancy_cells <- 1 - exp(-rel_abund_cells)
 sims_static <- calculate(K_cells,
                          larval_hab_cells,
                          max_occupancy_cells,
-                         # values = draws,
+                         values = draws,
                          nsim = 100)
 
 # make static maps
@@ -534,12 +538,24 @@ terra::writeRaster(
 
 # get posterior simulations
 sims_temporal <- calculate(occupancy_cells,
-                           values = draws,
-                           nsim = 100)
+                                  values = draws,
+                                  nsim = 100)
+sims_temporal_mode_1 <- calculate(occupancy_cells,
+                                  values = draws_mode_1,
+                                  nsim = 100)
+sims_temporal_mode_2 <- calculate(occupancy_cells,
+                                  values = draws_mode_2,
+                                  nsim = 100)
 
 occupancy_cells_pred <- apply(sims_temporal$occupancy_cells,
-                              2:3,
-                              mean)
+                                     2:3,
+                                     mean)
+occupancy_cells_pred_mode_1 <- apply(sims_temporal_mode_1$occupancy_cells,
+                                     2:3,
+                                     mean)
+occupancy_cells_pred_mode_2 <- apply(sims_temporal_mode_2$occupancy_cells,
+                                     2:3,
+                                     mean)
 
 # set up time-varying rasters
 mask_multi <- replicate(n_years, mask, simplify = FALSE) %>%
@@ -547,23 +563,83 @@ mask_multi <- replicate(n_years, mask, simplify = FALSE) %>%
 occupancy <- mask_multi
 names(occupancy) <- years
 
+occupancy_mode_1 <- occupancy_mode_2 <- occupancy
+
 for (i in seq_len(n_years)) {
   occupancy[[i]][non_na_cells] <- occupancy_cells_pred[i, ]
+  occupancy_mode_1[[i]][non_na_cells] <- occupancy_cells_pred_mode_1[i, ]
+  occupancy_mode_2[[i]][non_na_cells] <- occupancy_cells_pred_mode_2[i, ]
 }
 
 # set unpopulated areas to 0
 occupancy <- occupancy * populated_area_mask
+occupancy_mode_1 <- occupancy_mode_1 * populated_area_mask
+occupancy_mode_2 <- occupancy_mode_2 * populated_area_mask
 
 years_plot <- as.character(round(seq(min(years), max(years), length.out = 6)))
 
-par(mfrow = c(3, 2))
+years_plot <- c("1990", "2000", "2010", "2022")
+par(mfrow = c(2, 2))
 plot(occupancy[[years_plot]])
 
-# save the distribution rasters
+par(mfrow = c(2, 2))
+plot(occupancy_mode_1[[years_plot]])
 
+par(mfrow = c(2, 2))
+plot(occupancy_mode_2[[years_plot]])
+
+# save the distribution rasters
 terra::writeRaster(
   x = occupancy,
   filename = "output/rasters/derived/predicted_occupancy.tif",
   overwrite = TRUE
 )
 
+terra::writeRaster(
+  x = occupancy_mode_1,
+  filename = "output/rasters/derived/predicted_occupancy_mode_1.tif",
+  overwrite = TRUE
+)
+
+terra::writeRaster(
+  x = occupancy_mode_2,
+  filename = "output/rasters/derived/predicted_occupancy_mode_2.tif",
+  overwrite = TRUE
+)
+
+
+# output proportion full, by full hexes, at least for debugging
+
+prop_full_cells <- exp(log_prop_full_cells)
+
+sims_temporal2 <- calculate(prop_full_cells,
+                            values = draws_mode_2,
+                            nsim = 100)
+
+prop_full_cells_pred <- apply(sims_temporal2$prop_full_cells,
+                              2:3,
+                              mean)
+
+# set up time-varying rasters
+prop_full <- mask_multi
+names(prop_full) <- years
+
+for (i in seq_len(n_years)) {
+  prop_full[[i]][non_na_cells] <- prop_full_cells_pred[i, ]
+}
+
+# set unpopulated areas to 0
+# prop_full <- prop_full * populated_area_mask
+
+years_plot <- as.character(round(seq(min(years), max(years), length.out = 6)))
+
+par(mfrow = c(3, 2))
+plot(prop_full[[years_plot]],
+     range = c(0, 1))
+
+# save the distribution rasters
+terra::writeRaster(
+  x = prop_full,
+  filename = "output/rasters/derived/predicted_prop_full.tif",
+  overwrite = TRUE
+)
