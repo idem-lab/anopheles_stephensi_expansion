@@ -5,19 +5,13 @@ library(readr)
 
 # data from https://apps.who.int/malaria/maps/threats
 mtm_raw <- read_xlsx(
-  path = "data/MTM_INVASIVE_VECTOR_SPECIES_20230303.xlsx",
+  path = "data/MTM_INVASIVE_VECTOR_SPECIES_20230913.xlsx",
   sheet = "Data"
 )
 
 
 pa_data <- mtm_raw %>%
   mutate(
-    #date = paste(YEAR_END, MONTH_END) %>% ym
-    # date = case_when(
-    #   !is.na(MONTH_START) ~ paste(YEAR_START, MONTH_START, "01") %>% ymd,
-    #   !is.na(YEAR_START) ~  paste(YEAR_START, "JAN", "01") %>% ymd,
-    #   TRUE ~ NA_Date_
-    # ), # something sus going on
     year = YEAR_START,
     presence = if_else(INVASIVE_STATUS == "not found", 0, 1), # either listed as "invasive", or "native" if present, or "not found" if absent
     presence = if_else(is.na(presence), 1, presence),
@@ -88,3 +82,4 @@ write_csv(
   first_detection,
   "output/tabular/first_detection.csv"
 )
+
