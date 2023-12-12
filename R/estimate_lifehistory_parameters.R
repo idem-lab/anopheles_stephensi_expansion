@@ -64,7 +64,7 @@ pea_temp_Ag <- make_pea_temp(das_temp_Ag, mdr_temp_Ag)
 # plot fitted curves and data
 curves <- expand_grid(
   temperature = seq(0, 60, by = 1),
-  trait_name = c("MDR", "PEA", "EFD"),
+  trait_name = c("MDR", "PEA", "EFD", ),
   species = c("An. stephensi", "An. gambiae")
 ) %>%
   mutate(
@@ -511,7 +511,7 @@ resid_checks <- adult_survival_data %>%
 # this should look uniform
 hist(pnorm(resid_checks$resid))
 
-# what proportion of datapoints are outliers?
+# what proportion of datapoints are outliers? # percentage?
 round(100 * mean(!is.finite(resid_checks$resid)), 1)
 
 # plot where these fall in time vs temp
@@ -681,6 +681,112 @@ ggsave("figures/lifehistory_adult_survival.png",
        bg = "white",
        width = 7,
        height = 5)
+
+
+ggplot(
+  density_plotting %>% 
+    filter(species == "An. stephensi"),
+  aes(
+    y = humidity,
+    x = temperature
+  )
+) +
+  facet_wrap(~species) +
+  geom_contour_filled(
+    aes(z = prob_7d),
+    binwidth = bw
+  ) +
+  geom_contour(
+    aes(z = prob_7d),
+    binwidth = bw,
+    colour = grey(0.2),
+    linewidth = 0.5
+  ) +
+  geom_text_contour(
+    aes(z = prob_7d),
+    binwidth = bw,
+    nudge_y = -5,
+    skip = 0
+  ) +
+  geom_point(
+    data = survival_summary %>% 
+      filter(species == "An. stephensi"),
+    mapping = aes(
+      colour = survival_7d_cut
+    ),
+    shape = 16,
+    size = 4
+  ) +
+  geom_point(
+    data = survival_summary %>% 
+      filter(species == "An. stephensi"),
+    shape = 21,
+    colour = grey(0.4),
+    size = 4
+  ) +
+  scale_fill_discrete(type = cols) +
+  scale_color_discrete(type = cols) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  ggtitle("Adult survival vs air temperature and humidity",
+          "Probability of surviving 1 week") +
+  ylab("Humidity(%)") +
+  xlab("Temperature (C)")
+
+ggsave("figures/lifehistory_adult_survival.png",
+       bg = "white",
+       width = 7,
+       height = 5)
+
+
+ggplot(density_plotting,
+       aes(y = humidity,
+           x = temperature)) +
+  facet_wrap(~species) +
+  geom_contour_filled(
+    aes(z = prob_7d),
+    binwidth = bw
+  ) +
+  geom_contour(
+    aes(z = prob_7d),
+    binwidth = bw,
+    colour = grey(0.2),
+    linewidth = 0.5
+  ) +
+  geom_text_contour(
+    aes(z = prob_7d),
+    binwidth = bw,
+    nudge_y = -5,
+    skip = 0
+  ) +
+  geom_point(
+    data = survival_summary,
+    mapping = aes(
+      colour = survival_7d_cut
+    ),
+    shape = 16,
+    size = 4
+  ) +
+  geom_point(
+    data = survival_summary,
+    shape = 21,
+    colour = grey(0.4),
+    size = 4
+  ) +
+  scale_fill_discrete(type = cols) +
+  scale_color_discrete(type = cols) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  ggtitle("Adult survival vs air temperature and humidity",
+          "Probability of surviving 1 week") +
+  ylab("Humidity(%)") +
+  xlab("Temperature (C)")
+
+ggsave("figures/lifehistory_adult_survival.png",
+       bg = "white",
+       width = 7,
+       height = 5)
+
 
 
 # now we need to save these neatly to be loaded reused later, getting around all
