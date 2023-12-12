@@ -473,6 +473,7 @@ load_stephensi_survival_data <- function(){
 # supplemental information to Villena et al., and clean andaugment it
 load_villena_data <- function() {
   
+  # https://github.com/oswaldov/Malaria_Temperature/blob/main/data/traits.csv
   read.csv("data/life_history_params/oswaldov-Malaria_Temperature-16c9d29/data/traits.csv",
            header = TRUE,
            row.names = 1) %>%
