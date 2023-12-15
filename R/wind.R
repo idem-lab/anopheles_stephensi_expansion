@@ -9,6 +9,7 @@ library(rWind)
 library(raster)
 library(tidyverse)
 library(gdistance)
+library(geosphere)
 
 # download some wind time series data using the rWind package
 # we'll grab 24 days distributed across a single year
@@ -32,11 +33,30 @@ conductance <- wind %>%
   add_coords()
 
 
+# fails 
+# Error in .calcTest(x[1:5], fun, na.rm, forcefun, forceapply) : 
+#   cannot use this function
+
+# within windrose_rasters()
+
+w <- wind
 outfile <- "windrose.tif"
 order <- "uuvv"
 p <- 1
 ncores <- 1
 
+
+rosefun <- function(x) windrose(x, ...)
+wr <- add_res(w)
+wr <- add_lat(wr)
+wr <- raster::calc(wr, fun = rosefun, forceapply = TRUE, 
+                     filename = outfile)
+
+# fails
+# Error in .calcTest(x[1:5], fun, na.rm, forcefun, forceapply) : 
+#   cannot use this function
+
+# within windrose()
 x <- wr
 
 lat <- x[1]
@@ -47,11 +67,34 @@ weight <- sqrt(uv[, 1]^2 + uv[, 2]^2)^p
 
 zz <- windscape::direction(uv[, 2], -1 * uv[, 1])
 
+dir <- spin90(windscape::direction(uv[, 2], -1 * uv[, 1]))
 
+# fails
+# Error in x[x < (-180)] <- x[x < (-180)] + 360 : 
+#   NAs are not allowed in subscripted assignments
+
+# alter spin90 to cope with NAs
+spin90 <- function (x) 
+{
+  x <- x - 90
+  
+  ss <- x < (-180) & !is.na(x)
+  
+  x[ss] <- x[ss] + 360
+  x
+}
 
 dir <- spin90(windscape::direction(uv[, 2], -1 * uv[, 1]))
-dir[dir < 0] <- dir[dir < 0] + 360
-dir[dir == 0] <- 360
+
+
+dirgr0 <- dir < 0 & !is.na(dir)
+
+dir[dirgr0] <- dir[dirgr0] + 360
+
+dir0 <- dir == 0
+
+dir[dir0] <- 360
+
 nc <- cbind(x = c(0, res, res, res, 0, -res, -res, -res), 
             y = c(res, res, 0, -res, -res, -res, 0, res) + lat)
 nc[, 2] <- pmin(nc[, 2], 90)
@@ -76,6 +119,32 @@ spin90 <- function (x)
   x[ss] <- x[ss] + 360
   x
 }
+
+
+windrose <- function (x, p = 1) 
+{
+  lat <- x[1]
+  res <- x[2]
+  x <- x[3:length(x)]
+  uv <- matrix(x, ncol = 2, byrow = F)
+  weight <- sqrt(uv[, 1]^2 + uv[, 2]^2)^p
+  dir <- spin90(windscape::direction(uv[, 2], -1 * uv[, 1]))
+  dirgr0 <- dir < 0 & !is.na(dir)
+  dir[dirgr0] <- dir[dirgr0] + 360
+  dir0 <- dir == 0
+  dir[dir0] <- 360
+  nc <- cbind(x = c(0, res, res, res, 0, -res, -res, -res), 
+              y = c(res, res, 0, -res, -res, -res, 0, res) + lat)
+  nc[, 2] <- pmin(nc[, 2], 90)
+  nc[, 2] <- pmax(nc[, 2], -90)
+  nb <- geosphere::bearingRhumb(c(0, lat), nc)
+  nb <- c(nb, 360)
+  l <- edge_loadings(dir, weight, nb)
+  nd <- geosphere::distGeo(c(0, lat), nc)
+  l <- l/nd
+  l[c(6:8, 1:5)]
+}
+
 
 function (w, outfile, order = "uvuv", ncores = 1, ...) 
 {
