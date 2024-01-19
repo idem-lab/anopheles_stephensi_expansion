@@ -9,12 +9,12 @@ library(rWind)
 library(raster)
 library(tidyverse)
 library(gdistance)
-library(geosphere)
+#library(geosphere)
 
 # download some wind time series data using the rWind package
 # we'll grab 24 days distributed across a single year
 times <- expand.grid(yyyy = 2023, mm = 1:12, dd = c(1, 15), tt = 12)
-wd <- pmap(times, wind.dl, lon1 = -120, lon2 = -90, lat1 = 30, lat2 = 50)
+wd <- pmap(times, wind.dl, lon1 = -120, lon2 = -90, lat1 = 30, lat2 = 50, type =)
 
 # convert to raster stack
 u <- wd %>%
