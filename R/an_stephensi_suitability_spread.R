@@ -28,8 +28,20 @@ larval_covs <- rast("output/rasters/derived/larval_habitat_covariates.tif")
 climatic_rel_abund <- rast("output/rasters/derived/climatic_rel_abund.tif")
 as_detection_density <- rast("output/rasters/derived/an_stephensi_detection_density.tif")
 
+# update the mask to match the coarsest extents
+mask <- mask(mask, climatic_rel_abund)
 mask <- mask(mask, hex_lookup)
+
+# remask the hexes and everything else
+larval_covs <- mask(larval_covs, mask)
+climatic_rel_abund <- mask(climatic_rel_abund, mask)
+as_detection_density <- mask(as_detection_density, mask)
+
+hex_lookup <- mask(hex_lookup, mask)
 hex_populated_lookup <- mask(hex_populated_lookup, mask)
+all_hexes <- unique(hex_lookup[][, 1])
+hexes <- hexes %>%
+  filter(id %in% all_hexes)
 
 # make a raster of cell areas, and scale them
 cell_area <- terra::cellSize(mask)
@@ -37,7 +49,6 @@ cell_area <- mask(cell_area, mask)
 cell_area <- cell_area / global(cell_area, "max", na.rm = TRUE)[1, 1]
 
 # add an epsilon to the climatic relative abundance to avoid 0 abundances later
-climatic_rel_abund <- mask(climatic_rel_abund, mask)
 climate_suitable <- climatic_rel_abund > 0
 climatic_rel_abund <- climatic_rel_abund + .Machine$double.eps
 
@@ -167,7 +178,8 @@ larval_covs_hex <- larval_covs_hex[, names(larval_covs_points)]
 climatic_rel_abund_hexes <- terra::zonal(
   x = climatic_rel_abund,
   z = hex_populated_lookup,
-  fun = "mean") %>%
+  fun = "mean",
+  na.rm = TRUE) %>%
   as_tibble() %>%
   pull(mean)
 
@@ -175,7 +187,8 @@ climatic_rel_abund_hexes <- terra::zonal(
 log_area_hex <- terra::zonal(
   x = cell_area,
   z = hex_populated_lookup,
-  fun = "sum")  %>%
+  fun = "sum",
+  na.rm = TRUE)  %>%
   as_tibble() %>%
   pull(area) %>%
   log()
@@ -310,9 +323,10 @@ log_R_hex <- log1pe(log_K_hex - log_M)
 
 # manually define the hexes in the native range to roughly match that in Sinka
 # et al 2020 (exclude western part of Arabian peninsula)
-hex_native <- c(7, 8, 11, 27, 29, 38, 39, 40, 41, 45, 46, 54, 
-              68, 69, 71, 72, 73, 74, 75,
-              93, 94, 99, 100, 101, 102)
+hex_native <- c(10, 69, 14, 48, 9, 121, 50, 113, 123,
+                114, 120, 59, 36, 53, 58, 49, 112, 122, 93,
+                87, 90, 91, 94)
+# plot(hex_lookup %in% hex_native)
 in_native_range <- as.numeric(hex_order %in% hex_native)
 
 eps <- sqrt(.Machine$double.eps)
@@ -379,7 +393,8 @@ log_prop_full_hex <- sweep(log_rel_abund_hex, 2, log_K_hex, FUN = "-")
 
 # hexes to points is an integer lookup giving the hexes to which each of the
 # points belong
-log_prop_full_points <- log_prop_full_hex[, detections$id]
+hex_id <- match(detections$id, hexes$id)
+log_prop_full_points <- log_prop_full_hex[, hex_id]
 log_rel_abund_points <- sweep(log_prop_full_points, 2, log_K_points, FUN = "+") 
 
 # now define a likelihood for the (right truncated) time to detection dataset
@@ -451,6 +466,10 @@ draws_mode_2 <- greta:::as_greta_mcmc_list(
   model_info = mi_mode_2
 )
 
+# fairly well converged within each mode
+coda::gelman.diag(draws_mode_1, autoburnin = FALSE)
+coda::gelman.diag(draws_mode_2, autoburnin = FALSE)
+
 
 # make prediction rasters
 
@@ -480,7 +499,8 @@ max_occupancy_cells <- 1 - exp(-K_cells)
 
 # get the log proportions full in each timestep (hex level) and use it to
 # compute relative abundance at cell level
-log_prop_full_cells <- log_prop_full_hex[, hex_lookup[non_na_cells][, 1]]
+id <- match(hex_lookup[non_na_cells][, 1], hexes$id)
+log_prop_full_cells <- log_prop_full_hex[, id]
 log_rel_abund_cells <- sweep(log_prop_full_cells, 2, log_K_cells, FUN = "+") 
 rel_abund_cells <- exp(log_rel_abund_cells)
 
@@ -641,5 +661,80 @@ plot(prop_full[[years_plot]],
 terra::writeRaster(
   x = prop_full,
   filename = "output/rasters/derived/predicted_prop_full.tif",
+  overwrite = TRUE
+)
+
+# posterior mean maps for K, time-varying abundance,
+# larval habitats?
+
+terra::writeRaster(
+  x = K,
+  filename = "output/rasters/derived/carrying_capacity.tif",
+  overwrite = TRUE
+)
+
+terra::writeRaster(
+  x = larval_habitat,
+  filename = "output/rasters/derived/larval_habitat.tif",
+  overwrite = TRUE
+)
+
+# (needed to remove and gc sims_temporal, sims_temporal_mode_1, and
+# sims_temporal_mode_2 for this to run without exhausting memory)
+
+# make relative abundance raster
+sims_temporal_rel_abund <- calculate(rel_abund_cells,
+                                     values = draws,
+                                     nsim = 100)
+sims_temporal_rel_abund_mode_1 <- calculate(rel_abund_cells,
+                                            values = draws_mode_1,
+                                            nsim = 100)
+sims_temporal_rel_abund_mode_2 <- calculate(rel_abund_cells,
+                                            values = draws_mode_2,
+                                            nsim = 100)
+
+rel_abund_cells_pred <- apply(sims_temporal_rel_abund$rel_abund_cells,
+                              2:3,
+                              mean)
+rel_abund_cells_pred_mode_1 <- apply(sims_temporal_rel_abund_mode_1$rel_abund_cells,
+                                     2:3,
+                                     mean)
+rel_abund_cells_pred_mode_2 <- apply(sims_temporal_rel_abund_mode_2$rel_abund_cells,
+                                     2:3,
+                                     mean)
+
+# set up time-varying rasters
+rel_abund <- mask_multi
+names(rel_abund) <- years
+
+rel_abund_mode_1 <- rel_abund_mode_2 <- rel_abund
+
+for (i in seq_len(n_years)) {
+  rel_abund[[i]][non_na_cells] <- rel_abund_cells_pred[i, ]
+  rel_abund_mode_1[[i]][non_na_cells] <- rel_abund_cells_pred_mode_1[i, ]
+  rel_abund_mode_2[[i]][non_na_cells] <- rel_abund_cells_pred_mode_2[i, ]
+}
+
+# set unpopulated areas to 0
+rel_abund <- rel_abund * populated_area_mask
+rel_abund_mode_1 <- rel_abund_mode_1 * populated_area_mask
+rel_abund_mode_2 <- rel_abund_mode_2 * populated_area_mask
+
+# save the relative abundance rasters
+terra::writeRaster(
+  x = rel_abund,
+  filename = "output/rasters/derived/relative_abundance.tif",
+  overwrite = TRUE
+)
+
+terra::writeRaster(
+  x = rel_abund_mode_1,
+  filename = "output/rasters/derived/relative_abundance_mode_1.tif",
+  overwrite = TRUE
+)
+
+terra::writeRaster(
+  x = rel_abund_mode_2,
+  filename = "output/rasters/derived/relative_abundance_mode_2.tif",
   overwrite = TRUE
 )

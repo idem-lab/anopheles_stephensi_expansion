@@ -18,7 +18,7 @@ global.pop <- rast("output/rasters/covariates/pop.grd")[["pop_2020"]]
 
 global.pop <- terra::aggregate(global.pop,
                                fact = 10,
-                               fun="sum",
+                               fun ="sum",
                                na.rm = TRUE)
 
 global.pop <- terra::project(global.pop,"ESRI:102022")
@@ -75,3 +75,4 @@ distance_matrix <- distance_matrix / max(distance_matrix)
 saveRDS(radiation_matrix, "output/tabular/radiation_matrix.RDS")
 saveRDS(gravity_matrix, "output/tabular/gravity_matrix.RDS")
 saveRDS(distance_matrix, "output/tabular/distance_matrix.RDS")
+

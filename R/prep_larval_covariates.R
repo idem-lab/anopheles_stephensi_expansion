@@ -95,14 +95,16 @@ larval_covs_continuous <- c(accessibility,
                             log1p(pop))
 larval_covs_continuous <- aggregate(larval_covs_continuous,
                                     agg_ratio,
-                                    fun = "mean")
+                                    fun = "mean",
+                                    na.rm = TRUE)
 larval_covs_continuous <- scale(larval_covs_continuous)
 
 larval_covs_discrete <- c(smod,
                           landcover)
 larval_covs_discrete <- aggregate(larval_covs_discrete,
                                   agg_ratio,
-                                  fun = "modal")
+                                  fun = "modal",
+                                  na.rm = TRUE)
 
 larval_covs <- c(larval_covs_continuous,
                  larval_covs_discrete)

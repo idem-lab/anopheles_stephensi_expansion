@@ -9,16 +9,23 @@ realised_distributions_mode_1 <- rast("output/rasters/derived/predicted_occupanc
 realised_distributions_mode_2 <- rast("output/rasters/derived/predicted_occupancy_mode_2.tif")
 larval_covs <- rast("output/rasters/derived/larval_habitat_covariates.tif")
 
+# load detection data for plotting
+
+first_detection <- readRDS("output/tabular/first_detection.RDS") %>%
+  filter(ever_detected == 1)
+
 ggplot() +
   geom_spatraster(
     data = potential_distribution,
+    maxcell = Inf
   ) +
   scale_fill_distiller(
     palette = "YlGnBu",
     direction = 1,
-    na.value = "white"
+    na.value = "white",
+    limits = c(0, 1)
   ) +
-  labs(fill = "Probability of suitability") +
+  labs(fill = "Suitability") +
   theme_minimal() +
   theme(
     axis.text.x = element_blank(),
@@ -26,7 +33,20 @@ ggplot() +
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank()
   ) +
-  ggtitle("Predicted potential distribution of An. stephensi")
+  ggtitle("Predicted potential distribution of An. stephensi") +
+  geom_point(
+    aes(
+      x = x,
+      y = y
+    ),
+    data = first_detection,
+    pch = 21,
+    colour = "black",
+    fill = "red",
+    # stroke = 0.8
+  ) +
+  xlab("") +
+  ylab("")
 
 ggsave("figures/An_stephensi_potential_distribution.png",
        bg = "white",
@@ -34,6 +54,34 @@ ggsave("figures/An_stephensi_potential_distribution.png",
        height = 6,
        dpi = 600)
 
+ggplot() +
+  geom_spatraster(
+    data = potential_distribution,
+    maxcell = Inf
+  ) +
+  scale_fill_distiller(
+    palette = "YlGnBu",
+    direction = 1,
+    na.value = "white",
+    limits = c(0, 1)
+  ) +
+  labs(fill = "Suitability") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  ggtitle("Predicted potential distribution of An. stephensi") +
+  xlab("") +
+  ylab("")
+
+ggsave("figures/An_stephensi_potential_distribution_nopoints.png",
+       bg = "white",
+       width = 9,
+       height = 6,
+       dpi = 600)
 
 
 years_keep <- c("2000", "2010", "2022")
