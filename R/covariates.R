@@ -72,7 +72,7 @@ covmask[!is.na(covmask)] <- 0
 
 covmask <- writereadrast(
   covmask,
-  "output/rasters/covariates/covmask.grd"
+  "output/rasters/covariates/covmask.tif"
 )
 
 covmask
@@ -82,14 +82,14 @@ built_height <- terra::mask(built_height, covmask)
 
 built_height <- writereadrast(
   built_height,
-  "output/rasters/covariates/built_height.grd"
+  "output/rasters/covariates/built_height.tif"
 )
 
 pop <- terra::mask(pop, covmask)
 
 pop <- writereadrast(
   pop,
-  "output/rasters/covariates/pop.grd"
+  "output/rasters/covariates/pop.tif"
 )
 
 ##### accessibility
@@ -109,7 +109,7 @@ accessibility <- terra::mask(accessibility, covmask)
 
 accessibility <- writereadrast(
   accessibility,
-  "output/rasters/covariates/accessibility.grd"
+  "output/rasters/covariates/accessibility.tif"
 )
 
 accessibility
@@ -156,7 +156,7 @@ evi <- terra::mask(evi, covmask)
 
 evi <- writereadrast(
   evi,
-  "output/rasters/covariates/evi.grd"
+  "output/rasters/covariates/evi.tif"
 )
 
 evi
@@ -246,7 +246,7 @@ names(built_height) <- "built_height"
 
 built_height <- writereadrast(
   built_height,
-  "output/rasters/covariates/built_height.grd"
+  "output/rasters/covariates/built_height.tif"
 )
 
 built_height
@@ -271,7 +271,7 @@ names(built_surface) <- "built_surface"
 
 built_surface <- writereadrast(
   built_surface,
-  "output/rasters/covariates/built_surface.grd"
+  "output/rasters/covariates/built_surface.tif"
 )
 
 built_surface
@@ -296,7 +296,7 @@ names(built_volume) <- "built_volume"
 
 built_volume <- writereadrast(
   built_volume,
-  "output/rasters/covariates/built_volume.grd"
+  "output/rasters/covariates/built_volume.tif"
 )
 
 built_volume
@@ -382,7 +382,7 @@ built_c <- terra::mask(built_c, covmask)
 
 built_c <- writereadrast(
   built_c,
-  "output/rasters/covariates/built_c.grd"
+  "output/rasters/covariates/built_c.tif"
 )
 
 built_c
@@ -465,7 +465,7 @@ names(smod) <- "smod"
 
 smod <- writereadrast(
   smod,
-  "output/rasters/covariates/smod.grd"
+  "output/rasters/covariates/smod.tif"
 )
 
 smod
@@ -605,7 +605,7 @@ lst_night <- mask(lst_day, covmask)
 
 lst_day <- writereadrast(
   lst_day,
-  "output/rasters/covariates/lst_day.grd"
+  "output/rasters/covariates/lst_day.tif"
 )
 
 lst_day
@@ -650,7 +650,7 @@ lst_night <- mask(lst_night, covmask)
 
 lst_night <- writereadrast(
   lst_night,
-  "output/rasters/covariates/lst_night.grd"
+  "output/rasters/covariates/lst_night.tif"
 )
 
 lst_night
@@ -687,7 +687,7 @@ nighttimelights <- terra::mask(nighttimelights, covmask)
 
 nighttimelights <- writereadrast(
   nighttimelights,
-  "output/rasters/covariates/nighttimelights.grd"
+  "output/rasters/covariates/nighttimelights.tif"
 )
 
 nighttimelights
@@ -729,7 +729,7 @@ rainfall <- mask(rainfall, covmask)
 
 rainfall <- writereadrast(
   rainfall,
-  "output/rasters/covariates/rainfall.grd"
+  "output/rasters/covariates/rainfall.tif"
 )
 
 rainfall
@@ -776,7 +776,7 @@ tcb <- terra::mask(tcb, covmask)
 
 tcb <- writereadrast(
   tcb,
-  "output/rasters/covariates/tcb.grd"
+  "output/rasters/covariates/tcb.tif"
 )
 
 tcb
@@ -824,7 +824,7 @@ tcw  <- terra::mask(tcw, covmask)
 
 tcw <- writereadrast(
   tcw,
-  "output/rasters/covariates/tcw.grd"
+  "output/rasters/covariates/tcw.tif"
 )
 
 tcw
@@ -922,7 +922,7 @@ covs <- c(
 
 covs <- writereadrast(
   covs,
-  "output/rasters/covariates/covs.grd"
+  "output/rasters/covariates/covs.tif"
 )
 
 covs_continuous <- c(
@@ -936,10 +936,10 @@ covs_continuous <- c(
 
 covs_continuous <- writereadrast(
   covs_continuous,
-  "output/rasters/covariates/covs_continuous.grd"
+  "output/rasters/covariates/covs_continuous.tif"
 )
 
-covs_continuous <- rast("output/rasters/covariates/covs_continuous.grd")
+covs_continuous <- rast("output/rasters/covariates/covs_continuous.tif")
 
 gc()
 
@@ -991,7 +991,7 @@ covs <- c(
 
 covs <- writereadrast(
   covs,
-  "output/rasters/covariates/covs.grd"
+  "output/rasters/covariates/covs.tif"
 )
 
 
@@ -1015,26 +1015,26 @@ writeRaster(
 populated <- rast("output/rasters/covariates/populated.tif")
 
 # 
-covmask <- rast("output/rasters/covariates/covmask.grd")
-covs <- rast("output/rasters/covariates/covs.grd")
-covs_continuous <- rast("output/rasters/covariates/covs_continuous.grd")
+covmask <- rast("output/rasters/covariates/covmask.tif")
+covs <- rast("output/rasters/covariates/covs.tif")
+covs_continuous <- rast("output/rasters/covariates/covs_continuous.tif")
 
-accessibility <- rast("output/rasters/covariates/accessibility.grd")
+accessibility <- rast("output/rasters/covariates/accessibility.tif")
 #evi <- rast("output/rasters/covariates/")
 #ghs_built
 #ghs_smod
-built_height <- rast("output/rasters/covariates/built_height.grd")
-built_surface <- rast("output/rasters/covariates/built_surface.grd")
-built_volume <- rast("output/rasters/covariates/built_volume.grd")
-built_c <- rast("output/rasters/covariates/built_c.grd")
+built_height <- rast("output/rasters/covariates/built_height.tif")
+built_surface <- rast("output/rasters/covariates/built_surface.tif")
+built_volume <- rast("output/rasters/covariates/built_volume.tif")
+built_c <- rast("output/rasters/covariates/built_c.tif")
 smod <- rast("output/rasters/covariates/smod.tif")
 landcover <- rast("output/rasters/covariates/landcover.tif")
-lst_day <- rast("output/rasters/covariates/lst_day.grd")
-lst_night <- rast("output/rasters/covariates/lst_night.grd")
-nighttimelights <- rast("output/rasters/covariates/nighttimelights.grd")
-rainfall <- rast("output/rasters/covariates/rainfall.grd")
-tcb <- rast("output/rasters/covariates/tcb.grd")
-tcw <- rast("output/rasters/covariates/tcw.grd")
-pop <- rast("output/rasters/covariates/pop.grd")
+lst_day <- rast("output/rasters/covariates/lst_day.tif")
+lst_night <- rast("output/rasters/covariates/lst_night.tif")
+nighttimelights <- rast("output/rasters/covariates/nighttimelights.tif")
+rainfall <- rast("output/rasters/covariates/rainfall.tif")
+tcb <- rast("output/rasters/covariates/tcb.tif")
+tcw <- rast("output/rasters/covariates/tcw.tif")
+pop <- rast("output/rasters/covariates/pop.tif")
 
 populated <- rast("output/rasters/covariates/populated.tif")
