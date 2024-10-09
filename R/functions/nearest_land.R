@@ -29,6 +29,10 @@ nearest_land <- function(coords,
       .before = everything()
     )
   
+  if (all(coords_new$valid)) {
+    return(coords_new)
+  }
+  
   # project the raster
   raster_proj <- raster %>%
     terra::project(projected_crs) %>%
