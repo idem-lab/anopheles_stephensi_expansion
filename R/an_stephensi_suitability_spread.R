@@ -29,7 +29,6 @@ climatic_rel_abund <- rast("output/rasters/derived/climatic_rel_abund.tif")
 as_detection_density <- rast("output/rasters/derived/an_stephensi_detection_density.tif")
 
 # update the mask to match the coarsest extents
-mask <- mask(mask, climatic_rel_abund)
 mask <- mask(mask, hex_lookup)
 
 # remask the hexes and everything else
@@ -48,9 +47,13 @@ cell_area <- terra::cellSize(mask)
 cell_area <- mask(cell_area, mask)
 cell_area <- cell_area / global(cell_area, "max", na.rm = TRUE)[1, 1]
 
-# add an epsilon to the climatic relative abundance to avoid 0 abundances later
+# pad and a add an epsilon to the climatic relative abundance to avoid 0
+# abundances later
+climatic_rel_abund[is.na(climatic_rel_abund)] <- 0
+climatic_rel_abund <- mask(climatic_rel_abund, mask)
 climate_suitable <- climatic_rel_abund > 0
-climatic_rel_abund <- climatic_rel_abund + .Machine$double.eps
+epsilon <- .Machine$double.eps
+climatic_rel_abund <- climatic_rel_abund + epsilon
 
 # An. stephensi presence, absence, and years of detection
 first_detection <- readRDS("output/tabular/first_detection.RDS")
@@ -86,7 +89,7 @@ first_detection <- first_detection %>%
 climate_vals <- terra::extract(climatic_rel_abund, first_detection[, 1:2])[, 2]
 hex_vals <- terra::extract(hex_populated_lookup, first_detection[, 1:2])[, 2]
 first_detection <- first_detection %>%
-  filter(is.finite(hex_vals) & climate_vals > 0)
+  filter(is.finite(hex_vals) & climate_vals > epsilon)
 
 # augment this with background points
 non_detection <- dismo::randomPoints(
@@ -211,6 +214,9 @@ matrix_index <- hexes %>%
     matrix_order,
     by = "h3_index") %>% 
   pull(index)
+
+# currently this is doing nothing
+# identical(matrix_index, seq_along(matrix_index))
 
 n_hexes <- nrow(hexes)
 
