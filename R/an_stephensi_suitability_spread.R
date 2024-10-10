@@ -231,7 +231,7 @@ distance_decay <- normal(0, 0.01, truncation = c(0, Inf))
 exponential_dispersal <- exp(-distance_matrix / distance_decay)
 
 # overall rate of dispersal
-dispersal_fraction <- normal(0, 0.01, truncation = c(0, 1))
+dispersal_fraction <- normal(0, 0.001, truncation = c(0, 1))
 
 # apply weights (summing to 1) for the different dispersal modes, with a priori
 # equal weights on each
@@ -447,35 +447,6 @@ coda::gelman.diag(draws,
                   multivariate = FALSE)
 
 plot(draws)
-summary(draws)
-
-# identify the chains that fell in each mode
-
-mn <- lapply(draws, function(x) mean(x[, "log_M"]))
-big_m_chain <- mn > 2
-mode_1_index <- which(big_m_chain)
-mode_2_index <- which(!big_m_chain)
-
-# need to split the draws, and secret draws, by these
-mi <- attr(draws, "model_info")
-mi_mode_1 <- mi_mode_2 <- mi
-
-mi_mode_1$raw_draws <- mi$raw_draws[mode_1_index]
-draws_mode_1 <- greta:::as_greta_mcmc_list(
-  x = draws[mode_1_index],
-  model_info = mi_mode_1
-)
-
-mi_mode_2$raw_draws <- mi_mode_2$raw_draws[mode_2_index]
-draws_mode_2 <- greta:::as_greta_mcmc_list(
-  x = draws[mode_2_index],
-  model_info = mi_mode_2
-)
-
-# fairly well converged within each mode
-coda::gelman.diag(draws_mode_1, autoburnin = FALSE)
-coda::gelman.diag(draws_mode_2, autoburnin = FALSE)
-
 
 # make prediction rasters
 
@@ -562,24 +533,13 @@ terra::writeRaster(
   overwrite = TRUE
 )
 
-# get posterior simulations
+# get posterior simulations (few sims bc memory issues with larger prediction
+# set)
 sims_temporal <- calculate(occupancy_cells,
                                   values = draws,
                                   nsim = 100)
-sims_temporal_mode_1 <- calculate(occupancy_cells,
-                                  values = draws_mode_1,
-                                  nsim = 100)
-sims_temporal_mode_2 <- calculate(occupancy_cells,
-                                  values = draws_mode_2,
-                                  nsim = 100)
 
 occupancy_cells_pred <- apply(sims_temporal$occupancy_cells,
-                                     2:3,
-                                     mean)
-occupancy_cells_pred_mode_1 <- apply(sims_temporal_mode_1$occupancy_cells,
-                                     2:3,
-                                     mean)
-occupancy_cells_pred_mode_2 <- apply(sims_temporal_mode_2$occupancy_cells,
                                      2:3,
                                      mean)
 
@@ -589,30 +549,18 @@ mask_multi <- replicate(n_years, mask, simplify = FALSE) %>%
 occupancy <- mask_multi
 names(occupancy) <- years
 
-occupancy_mode_1 <- occupancy_mode_2 <- occupancy
-
 for (i in seq_len(n_years)) {
   occupancy[[i]][non_na_cells] <- occupancy_cells_pred[i, ]
-  occupancy_mode_1[[i]][non_na_cells] <- occupancy_cells_pred_mode_1[i, ]
-  occupancy_mode_2[[i]][non_na_cells] <- occupancy_cells_pred_mode_2[i, ]
 }
 
 # set unpopulated areas to 0
 occupancy <- occupancy * populated_area_mask
-occupancy_mode_1 <- occupancy_mode_1 * populated_area_mask
-occupancy_mode_2 <- occupancy_mode_2 * populated_area_mask
 
 years_plot <- as.character(round(seq(min(years), max(years), length.out = 6)))
 
 years_plot <- c("1990", "2000", "2010", "2022")
 par(mfrow = c(2, 2))
 plot(occupancy[[years_plot]])
-
-par(mfrow = c(2, 2))
-plot(occupancy_mode_1[[years_plot]])
-
-par(mfrow = c(2, 2))
-plot(occupancy_mode_2[[years_plot]])
 
 # save the distribution rasters
 terra::writeRaster(
@@ -621,54 +569,6 @@ terra::writeRaster(
   overwrite = TRUE
 )
 
-terra::writeRaster(
-  x = occupancy_mode_1,
-  filename = "output/rasters/derived/predicted_occupancy_mode_1.tif",
-  overwrite = TRUE
-)
-
-terra::writeRaster(
-  x = occupancy_mode_2,
-  filename = "output/rasters/derived/predicted_occupancy_mode_2.tif",
-  overwrite = TRUE
-)
-
-
-# output proportion full, by full hexes, at least for debugging
-
-prop_full_cells <- exp(log_prop_full_cells)
-
-sims_temporal2 <- calculate(prop_full_cells,
-                            values = draws_mode_2,
-                            nsim = 100)
-
-prop_full_cells_pred <- apply(sims_temporal2$prop_full_cells,
-                              2:3,
-                              mean)
-
-# set up time-varying rasters
-prop_full <- mask_multi
-names(prop_full) <- years
-
-for (i in seq_len(n_years)) {
-  prop_full[[i]][non_na_cells] <- prop_full_cells_pred[i, ]
-}
-
-# set unpopulated areas to 0
-# prop_full <- prop_full * populated_area_mask
-
-years_plot <- as.character(round(seq(min(years), max(years), length.out = 6)))
-
-par(mfrow = c(3, 2))
-plot(prop_full[[years_plot]],
-     range = c(0, 1))
-
-# save the distribution rasters
-terra::writeRaster(
-  x = prop_full,
-  filename = "output/rasters/derived/predicted_prop_full.tif",
-  overwrite = TRUE
-)
 
 # posterior mean maps for K, time-varying abundance,
 # larval habitats?
@@ -687,60 +587,31 @@ terra::writeRaster(
 
 # (needed to remove and gc sims_temporal, sims_temporal_mode_1, and
 # sims_temporal_mode_2 for this to run without exhausting memory)
-
+rm(sims_temporal)
+gc()
 # make relative abundance raster
 sims_temporal_rel_abund <- calculate(rel_abund_cells,
                                      values = draws,
                                      nsim = 100)
-sims_temporal_rel_abund_mode_1 <- calculate(rel_abund_cells,
-                                            values = draws_mode_1,
-                                            nsim = 100)
-sims_temporal_rel_abund_mode_2 <- calculate(rel_abund_cells,
-                                            values = draws_mode_2,
-                                            nsim = 100)
 
 rel_abund_cells_pred <- apply(sims_temporal_rel_abund$rel_abund_cells,
                               2:3,
                               mean)
-rel_abund_cells_pred_mode_1 <- apply(sims_temporal_rel_abund_mode_1$rel_abund_cells,
-                                     2:3,
-                                     mean)
-rel_abund_cells_pred_mode_2 <- apply(sims_temporal_rel_abund_mode_2$rel_abund_cells,
-                                     2:3,
-                                     mean)
 
 # set up time-varying rasters
 rel_abund <- mask_multi
 names(rel_abund) <- years
 
-rel_abund_mode_1 <- rel_abund_mode_2 <- rel_abund
-
 for (i in seq_len(n_years)) {
   rel_abund[[i]][non_na_cells] <- rel_abund_cells_pred[i, ]
-  rel_abund_mode_1[[i]][non_na_cells] <- rel_abund_cells_pred_mode_1[i, ]
-  rel_abund_mode_2[[i]][non_na_cells] <- rel_abund_cells_pred_mode_2[i, ]
 }
 
 # set unpopulated areas to 0
 rel_abund <- rel_abund * populated_area_mask
-rel_abund_mode_1 <- rel_abund_mode_1 * populated_area_mask
-rel_abund_mode_2 <- rel_abund_mode_2 * populated_area_mask
 
 # save the relative abundance rasters
 terra::writeRaster(
   x = rel_abund,
   filename = "output/rasters/derived/relative_abundance.tif",
-  overwrite = TRUE
-)
-
-terra::writeRaster(
-  x = rel_abund_mode_1,
-  filename = "output/rasters/derived/relative_abundance_mode_1.tif",
-  overwrite = TRUE
-)
-
-terra::writeRaster(
-  x = rel_abund_mode_2,
-  filename = "output/rasters/derived/relative_abundance_mode_2.tif",
   overwrite = TRUE
 )
