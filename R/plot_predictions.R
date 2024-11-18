@@ -8,6 +8,7 @@ climatic_rel_abund <- rast("output/rasters/derived/climatic_rel_abund.tif")
 potential_distribution <- rast("output/rasters/derived/predicted_potential_distribution.tif")
 realised_distributions_all <- rast("output/rasters/derived/predicted_occupancy.tif")
 larval_covs <- rast("output/rasters/derived/larval_habitat_covariates.tif")
+as_detection_density <- rast("output/rasters/derived/an_stephensi_detection_density.tif")
 
 # climatic rel_abund doesn't have the extra region beyond the target region
 mask <- climatic_rel_abund * 0
@@ -25,6 +26,7 @@ climatic_rel_abund_monthly <- mask(climatic_rel_abund_monthly, mask)
 potential_distribution <- mask(potential_distribution, mask)
 realised_distributions_all <- mask(realised_distributions_all, mask)
 larval_covs <- mask(larval_covs, mask)
+as_detection_density <- mask(as_detection_density, mask)
 
 plot_ext <- ext(-19.8, 103.7, -38.2, 41)
 climatic_rel_abund <- crop(climatic_rel_abund, plot_ext)
@@ -32,6 +34,7 @@ climatic_rel_abund_monthly <- crop(climatic_rel_abund_monthly, plot_ext)
 potential_distribution <- crop(potential_distribution, plot_ext)
 realised_distributions_all <- crop(realised_distributions_all, plot_ext)
 larval_covs <- crop(larval_covs, plot_ext)
+as_detection_density <- crop(as_detection_density, plot_ext)
 
 # load detection data for plotting
 
@@ -134,18 +137,16 @@ ggplot() +
     plot.title = element_markdown(),
     plot.subtitle = element_markdown()
   ) +
-  facet_wrap(~lyr) +
+  facet_wrap(~lyr, ncol = 1) +
   ggtitle("Predicted realised distribution of *An. stephensi*")
 
 ggsave("figures/An_stephensi_realised_distribution.png",
        bg = "white",
        width = 12,
-       height = 3,
+       height = 16,
        dpi = 600)
 
 # plot detection covariates
-as_detection_density <- rast("output/rasters/derived/an_stephensi_detection_density.tif")
-
 ggplot() +
   geom_spatraster(
     data = as_detection_density[[c("2000", "2010", "2022")]],
@@ -166,13 +167,13 @@ ggplot() +
     plot.title = element_markdown(),
     plot.subtitle = element_markdown()
   ) +
-  facet_wrap(~lyr) +
+  facet_wrap(~lyr, ncol = 1) +
   ggtitle("Increase in likelihood of detection")
 
 ggsave("figures/An_stephensi_detection_effort.png",
        bg = "white",
        width = 12,
-       height = 3,
+       height = 16,
        dpi = 600)
 
 # plot larval habitat rasters too
@@ -197,13 +198,13 @@ ggplot() +
     plot.title = element_markdown(),
     plot.subtitle = element_markdown()
   ) +
-  facet_wrap(~lyr) +
+  facet_wrap(~lyr, ncol = 1) +
   ggtitle("Larval habitat covariates")
 
 ggsave("figures/An_stephensi_larval_covariates.png",
        bg = "white",
        width = 12,
-       height = 3,
+       height = 16,
        dpi = 600)
 
 # climatic relative abundance
