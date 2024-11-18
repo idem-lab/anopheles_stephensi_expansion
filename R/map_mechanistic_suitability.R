@@ -214,35 +214,7 @@ writeRaster(monthly_relative_abundance_agg_Ag,
             file = "output/rasters/derived/An_gambiae_mechanistic_abundance.tif",
             overwrite = TRUE)
 
-# plot monthly for An. stephensi
-ggplot() +
-  geom_spatraster(
-    data = monthly_relative_abundance_agg_As,
-  ) +
-  facet_wrap(~lyr,
-             ncol = 3,
-             nrow = 4) +
-  scale_fill_distiller(
-    palette = "YlGnBu",
-    direction = 1,
-    na.value = grey(0.9)
-  ) +
-  labs(fill = "Climatic suitability") +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_blank(),
-    axis.text.y = element_blank(),
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank()
-  ) +
-  ggtitle("Predicted abundance of An. stephensi per larval habitat")
-
-ggsave("figures/An_stephensi_monthly_mechanistic_suitability.png",
-       bg = "white",
-       width = 7,
-       height = 7)
-
-# plot monthly for An. gambiae
+# plot monthly for An. gambiae (An. stephensi plotted elsewhere)
 ggplot() +
   geom_spatraster(
     data = monthly_relative_abundance_agg_Ag,
@@ -271,33 +243,7 @@ ggsave("figures/An_gambiae_monthly_mechanistic_suitability.png",
        height = 7)
 
 # combine all years and plot
-annual_relative_abundance_agg_As <- mean(monthly_relative_abundance_agg_As)
 annual_relative_abundance_agg_Ag <- mean(monthly_relative_abundance_agg_Ag)
-
-# plot annual summary for An. stephensi
-ggplot() +
-  geom_spatraster(
-    data = annual_relative_abundance_agg_As,
-  ) +
-  scale_fill_distiller(
-    palette = "YlGnBu",
-    direction = 1,
-    na.value = grey(0.9)
-  ) +
-  labs(fill = "Climatic suitability") +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_blank(),
-    axis.text.y = element_blank(),
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank()
-  ) +
-  ggtitle("Predicted abundance of An. stephensi per larval habitat")
-
-ggsave("figures/An_stephensi_mechanistic_suitability.png",
-       bg = "white",
-       width = 7,
-       height = 5)
 
 # and for An. gambiae
 ggplot() +
